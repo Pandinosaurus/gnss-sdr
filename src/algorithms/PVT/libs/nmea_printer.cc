@@ -33,10 +33,13 @@
 #include <utility>
 
 
-Nmea_Printer::Nmea_Printer(const std::string& filename, bool flag_nmea_output_file, bool flag_nmea_tty_port, std::string nmea_dump_devname, const std::string& base_path)
+Nmea_Printer::Nmea_Printer(const std::string& filename,
+    bool flag_nmea_output_file,
+    bool flag_nmea_tty_port,
+    std::string nmea_dump_devname,
+    const std::string& base_path) : nmea_base_path(base_path),
+                                    d_flag_nmea_output_file(flag_nmea_output_file)
 {
-    nmea_base_path = base_path;
-    d_flag_nmea_output_file = flag_nmea_output_file;
     if (d_flag_nmea_output_file == true)
         {
             fs::path full_path(fs::current_path());
@@ -52,7 +55,7 @@ Nmea_Printer::Nmea_Printer(const std::string& filename, bool flag_nmea_output_fi
                                 {
                                     if (!fs::create_directory(new_folder, ec))
                                         {
-                                            std::cout << "Could not create the " << new_folder << " folder.\n";
+                                            std::cout << "Could not create the " << new_folder << " folder." << std::endl;
                                             nmea_base_path = full_path.string();
                                         }
                                 }
@@ -66,7 +69,7 @@ Nmea_Printer::Nmea_Printer(const std::string& filename, bool flag_nmea_output_fi
 
             if ((nmea_base_path != ".") and (d_flag_nmea_output_file == true))
                 {
-                    std::cout << "NMEA files will be stored at " << nmea_base_path << '\n';
+                    std::cout << "NMEA files will be stored at " << nmea_base_path << std::endl;
                 }
 
             nmea_base_path = nmea_base_path + fs::path::preferred_separator;
@@ -80,7 +83,7 @@ Nmea_Printer::Nmea_Printer(const std::string& filename, bool flag_nmea_output_fi
                 }
             else
                 {
-                    std::cout << "File " << nmea_filename << " cannot be saved. Wrong permissions?\n";
+                    std::cout << "File " << nmea_filename << " cannot be saved. Wrong permissions?" << std::endl;
                 }
         }
 
@@ -97,7 +100,7 @@ Nmea_Printer::Nmea_Printer(const std::string& filename, bool flag_nmea_output_fi
         {
             nmea_dev_descriptor = -1;
         }
-    print_avg_pos = false;
+
     d_PVT_data = nullptr;
 }
 
@@ -115,18 +118,18 @@ Nmea_Printer::~Nmea_Printer()
         }
     catch (const std::ofstream::failure& e)
         {
-            std::cerr << "Problem closing NMEA dump file: " << nmea_filename << '\n';
+            std::cerr << "Problem closing NMEA dump file: " << nmea_filename << std::endl;
         }
     catch (const std::exception& e)
         {
-            std::cerr << e.what() << '\n';
+            std::cerr << e.what() << std::endl;
         }
     if (pos == 0)
         {
             errorlib::error_code ec;
             if (!fs::remove(fs::path(nmea_filename), ec))
                 {
-                    std::cerr << "Problem removing NMEA temporary file: " << nmea_filename << '\n';
+                    std::cerr << "Problem removing NMEA temporary file: " << nmea_filename << std::endl;
                 }
         }
     try
@@ -135,7 +138,7 @@ Nmea_Printer::~Nmea_Printer()
         }
     catch (const std::exception& e)
         {
-            std::cerr << e.what() << '\n';
+            std::cerr << e.what() << std::endl;
         }
 }
 
@@ -187,11 +190,10 @@ void Nmea_Printer::close_serial() const
 }
 
 
-bool Nmea_Printer::Print_Nmea_Line(const Rtklib_Solver* const pvt_data, bool print_average_values)
+bool Nmea_Printer::Print_Nmea_Line(const Rtklib_Solver* const pvt_data)
 {
     // set the new PVT data
     d_PVT_data = pvt_data;
-    print_avg_pos = print_average_values;
 
     // generate the NMEA sentences
 
@@ -209,14 +211,12 @@ bool Nmea_Printer::Print_Nmea_Line(const Rtklib_Solver* const pvt_data, bool pri
         {
             try
                 {
-                    // GPRMC
-                    nmea_file_descriptor << GPRMC;
-                    // GPGGA (Global Positioning System Fixed Data)
-                    nmea_file_descriptor << GPGGA;
-                    // GPGSA
-                    nmea_file_descriptor << GPGSA;
-                    // GPGSV
-                    nmea_file_descriptor << GPGSV;
+                    nmea_file_descriptor
+                        << GPRMC
+                        << GPGGA  // GPGGA (Global Positioning System Fixed Data)
+                        << GPGSA
+                        << GPGSV
+                        << std::flush;
                 }
             catch (const std::exception& ex)
                 {
@@ -414,7 +414,7 @@ std::string Nmea_Printer::get_GPGSA() const
 std::string Nmea_Printer::get_GPGSV() const
 {
     // GSV-GNSS Satellites in View
-    // $GPGSV,2,1,07,07,79,048,42,02,51,062,43,26,36,256,42,27,27,138,42*71
+    // $GPGSV,2,1,07,07,79,048,42,02,51,062,43,26,36,256,42,27,27,138,42,1*71
     // Notice that NMEA 2.1 only supports 12 channels
     std::stringstream sentence_str;
     std::array<unsigned char, 1024> buff{};

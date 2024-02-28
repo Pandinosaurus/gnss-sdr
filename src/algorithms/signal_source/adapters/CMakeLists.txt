@@ -1,19 +1,16 @@
 # GNSS-SDR is a Global Navigation Satellite System software-defined receiver.
 # This file is part of GNSS-SDR.
 #
-# SPDX-FileCopyrightText: 2010-2020 C. Fernandez-Prades cfernandez(at)cttc.es
+# SPDX-FileCopyrightText: 2010-2022 C. Fernandez-Prades cfernandez(at)cttc.es
 # SPDX-License-Identifier: BSD-3-Clause
 
 
 # Optional drivers
-set(OPT_DRIVER_SOURCES "")
-set(OPT_DRIVER_HEADERS "")
 
 if(ENABLE_RAW_UDP AND PCAP_FOUND)
-    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} custom_udp_signal_source.cc)
-    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} custom_udp_signal_source.h)
+    list(APPEND OPT_DRIVER_SOURCES custom_udp_signal_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS custom_udp_signal_source.h)
 endif()
-
 
 if(ENABLE_PLUTOSDR)
     ##############################################
@@ -21,32 +18,33 @@ if(ENABLE_PLUTOSDR)
     ##############################################
     set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} plutosdr_signal_source.cc)
     set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} plutosdr_signal_source.h)
+    ##############################################
+    # CUSTOM AD936X IIO SOURCE
+    ##############################################
+    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} ad936x_custom_signal_source.cc)
+    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} ad936x_custom_signal_source.h)
 endif()
-
 
 if(ENABLE_FMCOMMS2)
     ###############################################
     # FMCOMMS2 based SDR Hardware
     ###############################################
-    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} fmcomms2_signal_source.cc)
-    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} fmcomms2_signal_source.h)
+    list(APPEND OPT_DRIVER_SOURCES fmcomms2_signal_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS fmcomms2_signal_source.h)
 endif()
-
 
 if(ENABLE_AD9361)
     ###############################################
     # AD9361 DIRECT TO FPGA Hardware
     ###############################################
-    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} ad9361_fpga_signal_source.cc)
-    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} ad9361_fpga_signal_source.h)
+    list(APPEND OPT_DRIVER_SOURCES ad9361_fpga_signal_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS ad9361_fpga_signal_source.h)
 endif()
-
 
 if(ENABLE_FLEXIBAND AND TELEORBIT_FOUND)
-    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} flexiband_signal_source.cc)
-    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} flexiband_signal_source.h)
+    list(APPEND OPT_DRIVER_SOURCES flexiband_signal_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS flexiband_signal_source.h)
 endif()
-
 
 if(ENABLE_ARRAY)
     ##############################################
@@ -56,27 +54,36 @@ if(ENABLE_ARRAY)
         message(" gr-dbfcttc not found, install it from https://github.com/gnss-sdr/gr-dbfcttc")
         message(FATAL_ERROR "gr-dbfcttc required for building gnss-sdr with this option enabled")
     endif()
-    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} raw_array_signal_source.cc)
-    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} raw_array_signal_source.h)
+    list(APPEND OPT_DRIVER_SOURCES raw_array_signal_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS raw_array_signal_source.h)
 endif()
-
 
 if(ENABLE_OSMOSDR)
     ################################################################################
     # OsmoSDR - https://osmocom.org/projects/gr-osmosdr/
     ################################################################################
     if(GROSMOSDR_FOUND)
-        set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} osmosdr_signal_source.cc)
-        set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} osmosdr_signal_source.h)
+        list(APPEND OPT_DRIVER_SOURCES osmosdr_signal_source.cc)
+        list(APPEND OPT_DRIVER_HEADERS osmosdr_signal_source.h)
     endif()
 endif()
 
-
-if(ENABLE_UHD)
-    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} uhd_signal_source.cc)
-    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} uhd_signal_source.h)
+if(ENABLE_LIMESDR)
+    if(GRLIMESDR_FOUND)
+        list(APPEND OPT_DRIVER_SOURCES limesdr_signal_source.cc)
+        list(APPEND OPT_DRIVER_HEADERS limesdr_signal_source.h)
+    endif()
 endif()
 
+if(ENABLE_UHD)
+    list(APPEND OPT_DRIVER_SOURCES uhd_signal_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS uhd_signal_source.h)
+endif()
+
+if(ENABLE_ZMQ)
+    list(APPEND OPT_DRIVER_SOURCES zmq_signal_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS zmq_signal_source.h)
+endif()
 
 set(SIGNAL_SOURCE_ADAPTER_SOURCES
     signal_source_base.cc
@@ -92,6 +99,8 @@ set(SIGNAL_SOURCE_ADAPTER_SOURCES
     labsat_signal_source.cc
     two_bit_cpx_file_signal_source.cc
     two_bit_packed_file_signal_source.cc
+    four_bit_cpx_file_signal_source.cc
+    file_timestamp_signal_source.cc
     ${OPT_DRIVER_SOURCES}
 )
 
@@ -109,6 +118,8 @@ set(SIGNAL_SOURCE_ADAPTER_HEADERS
     labsat_signal_source.h
     two_bit_cpx_file_signal_source.h
     two_bit_packed_file_signal_source.h
+    four_bit_cpx_file_signal_source.h
+    file_timestamp_signal_source.h
     ${OPT_DRIVER_HEADERS}
 )
 
@@ -131,9 +142,13 @@ else()
     )
 endif()
 
+if(GNURADIO_IS_38_OR_GREATER)
+    target_compile_definitions(signal_source_adapters PUBLIC -DGR_GREATER_38=1)
+endif()
+
 target_include_directories(signal_source_adapters
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/core/interfaces
+        ${GNSSSDR_SOURCE_DIR}/src/core/interfaces
 )
 
 if(ENABLE_FPGA OR ENABLE_AD9361)
@@ -179,10 +194,24 @@ if(ENABLE_UHD)
     )
 endif()
 
+if(ENABLE_ZMQ)
+    target_link_libraries(signal_source_adapters
+        PUBLIC
+            Gnuradio::zeromq
+    )
+endif()
+
 if(ENABLE_OSMOSDR AND GROSMOSDR_FOUND)
     target_link_libraries(signal_source_adapters
         PUBLIC
             Gnuradio::osmosdr
+    )
+endif()
+
+if(ENABLE_LIMESDR AND GRLIMESDR_FOUND)
+    target_link_libraries(signal_source_adapters
+        PUBLIC
+            Gnuradio::limesdr
     )
 endif()
 
@@ -241,6 +270,19 @@ if(ENABLE_PLUTOSDR OR ENABLE_FMCOMMS2)
                 Gnuradio::analog
         )
     endif()
+    if(GR_IIO_TEMPLATIZED_API)
+        target_compile_definitions(signal_source_adapters
+            PUBLIC -DGR_IIO_TEMPLATIZED_API=1
+        )
+    endif()
+endif()
+
+if(GR_LIMESDR_IS_G38_BRANCH)
+    target_compile_definitions(signal_source_adapters PRIVATE -DGR_LIMESDR_IS_G38_BRANCH=1)
+endif()
+
+if(GRLIMESDR_PPS)
+    target_compile_definitions(signal_source_adapters PRIVATE -DLimeSDR_PPS=1)
 endif()
 
 if(ENABLE_CLANG_TIDY)

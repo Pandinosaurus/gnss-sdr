@@ -37,7 +37,7 @@ void Galileo_Fnav_Message::split_page(const std::string& page_string)
     const std::string CRC_data = page_string.substr(214, 24);
     const std::bitset<GALILEO_FNAV_DATA_FRAME_BITS> Word_for_CRC_bits(message_word);
     const std::bitset<24> checksum(CRC_data);
-    if (_CRC_test(Word_for_CRC_bits, checksum.to_ulong()) == true)
+    if (CRC_test(Word_for_CRC_bits, checksum.to_ulong()) == true)
         {
             flag_CRC_test = true;
             // CRC correct: Decode word
@@ -50,7 +50,7 @@ void Galileo_Fnav_Message::split_page(const std::string& page_string)
 }
 
 
-bool Galileo_Fnav_Message::_CRC_test(const std::bitset<GALILEO_FNAV_DATA_FRAME_BITS>& bits, uint32_t checksum) const
+bool Galileo_Fnav_Message::CRC_test(const std::bitset<GALILEO_FNAV_DATA_FRAME_BITS>& bits, uint32_t checksum) const
 {
     CRC_Galileo_FNAV_type CRC_Galileo;
 
@@ -60,7 +60,7 @@ bool Galileo_Fnav_Message::_CRC_test(const std::bitset<GALILEO_FNAV_DATA_FRAME_B
     // using boost::dynamic_bitset.
     // ToDo: Use boost::dynamic_bitset for all the bitset operations in this class
 
-    boost::dynamic_bitset<uint8_t> frame_bits(std::string(bits.to_string()));
+    boost::dynamic_bitset<uint8_t> frame_bits(bits.to_string());
 
     std::vector<uint8_t> bytes;
     boost::to_block_range(frame_bits, std::back_inserter(bytes));
@@ -282,16 +282,12 @@ void Galileo_Fnav_Message::decode_page(const std::string& data)
 uint64_t Galileo_Fnav_Message::read_navigation_unsigned(const std::bitset<GALILEO_FNAV_DATA_FRAME_BITS>& bits, const std::vector<std::pair<int32_t, int32_t>>& parameter) const
 {
     uint64_t value = 0ULL;
-    const int num_of_slices = parameter.size();
-    for (int i = 0; i < num_of_slices; i++)
+    for (const auto& p : parameter)
         {
-            for (int j = 0; j < parameter[i].second; j++)
+            for (int j = 0; j < p.second; j++)
                 {
                     value <<= 1U;  // shift left
-                    if (static_cast<int>(bits[GALILEO_FNAV_DATA_FRAME_BITS - parameter[i].first - j]) == 1)
-                        {
-                            value += 1;  // insert the bit
-                        }
+                    value |= static_cast<uint64_t>(bits[GALILEO_FNAV_DATA_FRAME_BITS - p.first - j]);
                 }
         }
     return value;
@@ -300,29 +296,12 @@ uint64_t Galileo_Fnav_Message::read_navigation_unsigned(const std::bitset<GALILE
 
 int64_t Galileo_Fnav_Message::read_navigation_signed(const std::bitset<GALILEO_FNAV_DATA_FRAME_BITS>& bits, const std::vector<std::pair<int32_t, int32_t>>& parameter) const
 {
-    int64_t value = 0LL;
-    const int num_of_slices = parameter.size();
-
-    // read the MSB and perform the sign extension
-    if (static_cast<int>(bits[GALILEO_FNAV_DATA_FRAME_BITS - parameter[0].first]) == 1)
+    int64_t value = (bits[GALILEO_FNAV_DATA_FRAME_BITS - parameter[0].first] == 1) ? -1LL : 0LL;
+    for (const auto& p : parameter)
         {
-            value ^= 0x0FFFFFFFFFFFFFFF;  // 64 bits variable
-        }
-    else
-        {
-            value &= 0;
-        }
-
-    for (int i = 0; i < num_of_slices; i++)
-        {
-            for (int j = 0; j < parameter[i].second; j++)
+            for (int32_t j = 0; j < p.second; j++)
                 {
-                    value <<= 1;                  // shift left
-                    value &= 0xFFFFFFFFFFFFFFFE;  // reset the corresponding bit (for the 64 bits variable)
-                    if (static_cast<int>(bits[GALILEO_FNAV_DATA_FRAME_BITS - parameter[i].first - j]) == 1)
-                        {
-                            value += 1;  // insert the bit
-                        }
+                    value = (value << 1) | static_cast<int64_t>(bits[GALILEO_FNAV_DATA_FRAME_BITS - p.first - j]);
                 }
         }
     return value;
@@ -401,15 +380,15 @@ Galileo_Ephemeris Galileo_Fnav_Message::get_ephemeris() const
     ephemeris.flag_all_ephemeris = flag_all_ephemeris;
     ephemeris.IOD_ephemeris = IOD_ephemeris;
     ephemeris.PRN = FNAV_SV_ID_PRN_1;
-    ephemeris.M_0 = FNAV_M0_2;             // Mean anomaly at reference time [semi-circles]
-    ephemeris.delta_n = FNAV_deltan_3;     // Mean motion difference from computed value  [semi-circles/sec]
+    ephemeris.M_0 = FNAV_M0_2;             // Mean anomaly at reference time [rad]
+    ephemeris.delta_n = FNAV_deltan_3;     // Mean motion difference from computed value [rad/sec]
     ephemeris.ecc = FNAV_e_2;              // Eccentricity
     ephemeris.sqrtA = FNAV_a12_2;          // Square root of the semi-major axis [meters^1/2]
-    ephemeris.OMEGA_0 = FNAV_omega0_2;     // Longitude of ascending node of orbital plane at weekly epoch [semi-circles]
-    ephemeris.i_0 = FNAV_i0_3;             // Inclination angle at reference time  [semi-circles]
-    ephemeris.omega = FNAV_w_3;            // Argument of perigee [semi-circles]
-    ephemeris.OMEGAdot = FNAV_omegadot_2;  // Rate of right ascension [semi-circles/sec]
-    ephemeris.idot = FNAV_idot_2;          // Rate of inclination angle [semi-circles/sec]
+    ephemeris.OMEGA_0 = FNAV_omega0_2;     // Longitude of ascending node of orbital plane at weekly epoch [rad]
+    ephemeris.i_0 = FNAV_i0_3;             // Inclination angle at reference time [rad]
+    ephemeris.omega = FNAV_w_3;            // Argument of perigee [rad]
+    ephemeris.OMEGAdot = FNAV_omegadot_2;  // Rate of right ascension [rad/sec]
+    ephemeris.idot = FNAV_idot_2;          // Rate of inclination angle [rad/sec]
     ephemeris.Cuc = FNAV_Cuc_3;            // Amplitude of the cosine harmonic correction term to the argument of latitude [radians]
     ephemeris.Cus = FNAV_Cus_3;            // Amplitude of the sine harmonic correction term to the argument of latitude [radians]
     ephemeris.Crc = FNAV_Crc_3;            // Amplitude of the cosine harmonic correction term to the orbit radius [meters]

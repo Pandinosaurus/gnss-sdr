@@ -27,6 +27,7 @@
 #include <gnuradio/io_signature.h>
 #include <volk/volk.h>
 #include <volk_gnsssdr/volk_gnsssdr.h>
+#include <algorithm>
 #include <array>
 #include <exception>
 #include <sstream>
@@ -64,20 +65,42 @@ galileo_e5a_noncoherentIQ_acquisition_caf_cc::galileo_e5a_noncoherentIQ_acquisit
     bool both_signal_components_,
     int CAF_window_hz_,
     int Zero_padding_,
-    bool enable_monitor_output) : gr::block("galileo_e5a_noncoherentIQ_acquisition_caf_cc",
-                                      gr::io_signature::make(1, 1, sizeof(gr_complex)),
-                                      gr::io_signature::make(0, 1, sizeof(Gnss_Synchro)))
+    bool enable_monitor_output)
+    : gr::block("galileo_e5a_noncoherentIQ_acquisition_caf_cc",
+          gr::io_signature::make(1, 1, sizeof(gr_complex)),
+          gr::io_signature::make(0, 1, sizeof(Gnss_Synchro))),
+      d_dump_filename(dump_filename),
+      d_gnss_synchro(nullptr),
+      d_fs_in(fs_in),
+      d_sample_counter(0ULL),
+      d_threshold(0),
+      d_doppler_freq(0),
+      d_mag(0),
+      d_input_power(0.0),
+      d_test_statistics(0),
+      d_state(0),
+      d_samples_per_ms(samples_per_ms),
+      d_samples_per_code(samples_per_code),
+      d_CAF_window_hz(CAF_window_hz_),
+      d_buffer_count(0),
+      d_doppler_resolution(0),
+      d_doppler_max(static_cast<int>(doppler_max)),
+      d_doppler_step(250),
+      d_fft_size(static_cast<int>(sampled_ms) * d_samples_per_ms),
+      d_num_doppler_bins(0),
+      d_gr_stream_buffer(0),
+      d_channel(0),
+      d_max_dwells(max_dwells),
+      d_well_count(0),
+      d_code_phase(0),
+      d_bit_transition_flag(bit_transition_flag),
+      d_active(false),
+      d_dump(dump),
+      d_both_signal_components(both_signal_components_),
+      d_enable_monitor_output(enable_monitor_output)
 {
     this->message_port_register_out(pmt::mp("events"));
-    d_sample_counter = 0ULL;  // SAMPLE COUNTER
-    d_active = false;
-    d_state = 0;
-    d_fs_in = fs_in;
-    d_samples_per_ms = samples_per_ms;
-    d_samples_per_code = samples_per_code;
-    d_max_dwells = max_dwells;
-    d_well_count = 0;
-    d_doppler_max = static_cast<int>(doppler_max);
+
     if (Zero_padding_ > 0)
         {
             d_sampled_ms = 1;
@@ -86,53 +109,31 @@ galileo_e5a_noncoherentIQ_acquisition_caf_cc::galileo_e5a_noncoherentIQ_acquisit
         {
             d_sampled_ms = sampled_ms;
         }
-    d_fft_size = static_cast<int>(sampled_ms) * d_samples_per_ms;
-    d_mag = 0;
-    d_input_power = 0.0;
-    d_num_doppler_bins = 0;
-    d_bit_transition_flag = bit_transition_flag;
-    d_buffer_count = 0;
-    d_both_signal_components = both_signal_components_;
-    d_CAF_window_hz = CAF_window_hz_;
-    d_enable_monitor_output = enable_monitor_output;
 
-    d_inbuffer.reserve(d_fft_size);
-    d_fft_code_I_A.reserve(d_fft_size);
-    d_magnitudeIA.reserve(d_fft_size);
+    d_inbuffer = std::vector<gr_complex>(d_fft_size);
+    d_fft_code_I_A = std::vector<gr_complex>(d_fft_size);
+    d_magnitudeIA = std::vector<float>(d_fft_size);
 
     if (d_both_signal_components == true)
         {
-            d_fft_code_Q_A.reserve(d_fft_size);
-            d_magnitudeQA.reserve(d_fft_size);
+            d_fft_code_Q_A = std::vector<gr_complex>(d_fft_size);
+            d_magnitudeQA = std::vector<float>(d_fft_size);
         }
 
     // IF COHERENT INTEGRATION TIME > 1
     if (d_sampled_ms > 1)
         {
-            d_fft_code_I_B.reserve(d_fft_size);
-            d_magnitudeIB.reserve(d_fft_size);
+            d_fft_code_I_B = std::vector<gr_complex>(d_fft_size);
+            d_magnitudeIB = std::vector<float>(d_fft_size);
             if (d_both_signal_components == true)
                 {
-                    d_fft_code_Q_B.reserve(d_fft_size);
-                    d_magnitudeQB.reserve(d_fft_size);
+                    d_fft_code_Q_B = std::vector<gr_complex>(d_fft_size);
+                    d_magnitudeQB = std::vector<float>(d_fft_size);
                 }
         }
 
     d_fft_if = gnss_fft_fwd_make_unique(d_fft_size);
     d_ifft = gnss_fft_rev_make_unique(d_fft_size);
-
-    d_dump = dump;
-    d_dump_filename = dump_filename;
-
-    d_doppler_resolution = 0;
-    d_threshold = 0;
-    d_doppler_step = 250;
-    d_gnss_synchro = nullptr;
-    d_code_phase = 0;
-    d_doppler_freq = 0;
-    d_test_statistics = 0;
-    d_channel = 0;
-    d_gr_stream_buffer = 0;
 }
 
 
@@ -160,7 +161,7 @@ void galileo_e5a_noncoherentIQ_acquisition_caf_cc::set_local_code(std::complex<f
 {
     // DATA SIGNAL
     // Three replicas of data primary code. CODE A: (1,1,1)
-    memcpy(d_fft_if->get_inbuf(), codeI, sizeof(gr_complex) * d_fft_size);
+    std::copy(codeI, codeI + d_fft_size, d_fft_if->get_inbuf());
 
     d_fft_if->execute();  // We need the FFT of local code
 
@@ -171,7 +172,7 @@ void galileo_e5a_noncoherentIQ_acquisition_caf_cc::set_local_code(std::complex<f
     if (d_both_signal_components == true)
         {
             // Three replicas of pilot primary code. CODE A: (1,1,1)
-            memcpy(d_fft_if->get_inbuf(), codeQ, sizeof(gr_complex) * d_fft_size);
+            std::copy(codeQ, codeQ + d_fft_size, d_fft_if->get_inbuf());
 
             d_fft_if->execute();  // We need the FFT of local code
 
@@ -183,10 +184,16 @@ void galileo_e5a_noncoherentIQ_acquisition_caf_cc::set_local_code(std::complex<f
     if (d_sampled_ms > 1)
         {
             // DATA CODE B: First replica is inverted (0,1,1)
+#if VOLK_EQUAL_OR_GREATER_31
+            auto minus_one = gr_complex(-1, 0);
+            volk_32fc_s32fc_multiply2_32fc(&(d_fft_if->get_inbuf())[0],
+                &codeI[0], &minus_one,
+                d_samples_per_code);
+#else
             volk_32fc_s32fc_multiply_32fc(&(d_fft_if->get_inbuf())[0],
                 &codeI[0], gr_complex(-1, 0),
                 d_samples_per_code);
-
+#endif
             d_fft_if->execute();  // We need the FFT of local code
 
             // Conjugate the local code
@@ -195,9 +202,16 @@ void galileo_e5a_noncoherentIQ_acquisition_caf_cc::set_local_code(std::complex<f
             if (d_both_signal_components == true)
                 {
                     // PILOT CODE B: First replica is inverted (0,1,1)
+#if VOLK_EQUAL_OR_GREATER_31
+                    auto minus_one = gr_complex(-1, 0);
+                    volk_32fc_s32fc_multiply2_32fc(&(d_fft_if->get_inbuf())[0],
+                        &codeQ[0], &minus_one,
+                        d_samples_per_code);
+#else
                     volk_32fc_s32fc_multiply_32fc(&(d_fft_if->get_inbuf())[0],
                         &codeQ[0], gr_complex(-1, 0),
                         d_samples_per_code);
+#endif
                     d_fft_if->execute();  // We need the FFT of local code
 
                     // Conjugate the local code
@@ -244,11 +258,11 @@ void galileo_e5a_noncoherentIQ_acquisition_caf_cc::init()
      * separately before non-coherent integration */
     if (d_CAF_window_hz > 0)
         {
-            d_CAF_vector.reserve(d_num_doppler_bins);
-            d_CAF_vector_I.reserve(d_num_doppler_bins);
+            d_CAF_vector = std::vector<float>(d_num_doppler_bins);
+            d_CAF_vector_I = std::vector<float>(d_num_doppler_bins);
             if (d_both_signal_components == true)
                 {
-                    d_CAF_vector_Q.reserve(d_num_doppler_bins);
+                    d_CAF_vector_Q = std::vector<float>(d_num_doppler_bins);
                 }
         }
 }
@@ -336,7 +350,7 @@ int galileo_e5a_noncoherentIQ_acquisition_caf_cc::general_work(int noutput_items
                     {
                         buff_increment = d_fft_size - d_buffer_count;
                     }
-                memcpy(&d_inbuffer[d_buffer_count], in, sizeof(gr_complex) * buff_increment);
+                std::copy(in, in + buff_increment, d_inbuffer.begin() + d_buffer_count);
                 // If buffer will be full in next iteration
                 if (d_buffer_count >= static_cast<int>(d_fft_size - d_gr_stream_buffer))
                     {
@@ -353,7 +367,7 @@ int galileo_e5a_noncoherentIQ_acquisition_caf_cc::general_work(int noutput_items
                 const auto *in = reinterpret_cast<const gr_complex *>(input_items[0]);  // Get the input samples pointer
                 if (d_buffer_count < d_fft_size)
                     {
-                        memcpy(&d_inbuffer[d_buffer_count], in, sizeof(gr_complex) * (d_fft_size - d_buffer_count));
+                        std::copy(in, in + (d_fft_size - d_buffer_count), d_inbuffer.begin() + d_buffer_count);
                     }
                 d_sample_counter += static_cast<uint64_t>(d_fft_size - d_buffer_count);  // sample counter
 
@@ -612,15 +626,15 @@ int galileo_e5a_noncoherentIQ_acquisition_caf_cc::general_work(int noutput_items
                                     {
                                         d_CAF_vector[doppler_index] += d_CAF_vector_I[i] * (1.0F - weighting_factor * static_cast<float>((doppler_index - i)));
                                     }
-                                d_CAF_vector[doppler_index] /= static_cast<float>(1.0F + static_cast<float>(CAF_bins_half + doppler_index) - weighting_factor * static_cast<float>(CAF_bins_half) * ((static_cast<float>(CAF_bins_half) + 1.0F) / 2.0F) - weighting_factor * static_cast<float>(doppler_index) * (static_cast<float>(doppler_index) + 1.0F) / 2.0F);  // triangles = [n*(n+1)/2]
+                                d_CAF_vector[doppler_index] /= 1.0F + static_cast<float>(CAF_bins_half + doppler_index) - weighting_factor * static_cast<float>(CAF_bins_half) * ((static_cast<float>(CAF_bins_half) + 1.0F) / 2.0F) - weighting_factor * static_cast<float>(doppler_index) * (static_cast<float>(doppler_index) + 1.0F) / 2.0F;  // triangles = [n*(n+1)/2]
                                 if (d_both_signal_components)
                                     {
                                         accum[0] = 0;
                                         for (int i = 0; i < CAF_bins_half + doppler_index + 1; i++)
                                             {
-                                                accum[0] += static_cast<float>(d_CAF_vector_Q[i] * (1.0F - weighting_factor * static_cast<float>(abs(doppler_index - i))));
+                                                accum[0] += d_CAF_vector_Q[i] * (1.0F - weighting_factor * static_cast<float>(abs(doppler_index - i)));
                                             }
-                                        accum[0] /= static_cast<float>(1.0F + static_cast<float>(CAF_bins_half + doppler_index) - weighting_factor * static_cast<float>(CAF_bins_half) * static_cast<float>(CAF_bins_half + 1) / 2.0F - weighting_factor * static_cast<float>(doppler_index) * static_cast<float>(doppler_index + 1) / 2.0F);  // triangles = [n*(n+1)/2]
+                                        accum[0] /= 1.0F + static_cast<float>(CAF_bins_half + doppler_index) - weighting_factor * static_cast<float>(CAF_bins_half) * static_cast<float>(CAF_bins_half + 1) / 2.0F - weighting_factor * static_cast<float>(doppler_index) * static_cast<float>(doppler_index + 1) / 2.0F;  // triangles = [n*(n+1)/2]
                                         d_CAF_vector[doppler_index] += accum[0];
                                     }
                             }
@@ -628,19 +642,19 @@ int galileo_e5a_noncoherentIQ_acquisition_caf_cc::general_work(int noutput_items
                         for (int doppler_index = CAF_bins_half; doppler_index < d_num_doppler_bins - CAF_bins_half; doppler_index++)
                             {
                                 d_CAF_vector[doppler_index] = 0;
-                                for (int i = doppler_index - CAF_bins_half; i < static_cast<int>(doppler_index + CAF_bins_half + 1); i++)
+                                for (int i = doppler_index - CAF_bins_half; i < doppler_index + CAF_bins_half + 1; i++)
                                     {
                                         d_CAF_vector[doppler_index] += d_CAF_vector_I[i] * (1.0F - weighting_factor * static_cast<float>((doppler_index - i)));
                                     }
-                                d_CAF_vector[doppler_index] /= static_cast<float>(1.0F + 2.0F * static_cast<float>(CAF_bins_half) - 2.0F * weighting_factor * static_cast<float>(CAF_bins_half) * static_cast<float>(CAF_bins_half + 1) / 2.0F);
+                                d_CAF_vector[doppler_index] /= 1.0F + 2.0F * static_cast<float>(CAF_bins_half) - 2.0F * weighting_factor * static_cast<float>(CAF_bins_half) * static_cast<float>(CAF_bins_half + 1) / 2.0F;
                                 if (d_both_signal_components)
                                     {
                                         accum[0] = 0;
-                                        for (int i = doppler_index - CAF_bins_half; i < static_cast<int>(doppler_index + CAF_bins_half + 1); i++)
+                                        for (int i = doppler_index - CAF_bins_half; i < doppler_index + CAF_bins_half + 1; i++)
                                             {
-                                                accum[0] += static_cast<float>(d_CAF_vector_Q[i] * (1 - weighting_factor * static_cast<float>((doppler_index - i))));
+                                                accum[0] += d_CAF_vector_Q[i] * (1 - weighting_factor * static_cast<float>((doppler_index - i)));
                                             }
-                                        accum[0] /= static_cast<float>(1.0F + 2.0F * static_cast<float>(CAF_bins_half) - 2.0F * weighting_factor * static_cast<float>(CAF_bins_half) * static_cast<float>(CAF_bins_half + 1) / 2.0F);
+                                        accum[0] /= 1.0F + 2.0F * static_cast<float>(CAF_bins_half) - 2.0F * weighting_factor * static_cast<float>(CAF_bins_half) * static_cast<float>(CAF_bins_half + 1) / 2.0F;
                                         d_CAF_vector[doppler_index] += accum[0];
                                     }
                             }
@@ -652,13 +666,13 @@ int galileo_e5a_noncoherentIQ_acquisition_caf_cc::general_work(int noutput_items
                                     {
                                         d_CAF_vector[doppler_index] += d_CAF_vector_I[i] * (1.0F - weighting_factor * static_cast<float>(abs(doppler_index - i)));
                                     }
-                                d_CAF_vector[doppler_index] /= static_cast<float>(1.0F + static_cast<float>(CAF_bins_half) + static_cast<float>(d_num_doppler_bins - doppler_index - 1) - weighting_factor * static_cast<float>(CAF_bins_half) * (static_cast<float>(CAF_bins_half) + 1.0F) / 2.0F - weighting_factor * static_cast<float>(d_num_doppler_bins - doppler_index - 1) * static_cast<float>(d_num_doppler_bins - doppler_index) / 2.0F);
+                                d_CAF_vector[doppler_index] /= 1.0F + static_cast<float>(CAF_bins_half) + static_cast<float>(d_num_doppler_bins - doppler_index - 1) - weighting_factor * static_cast<float>(CAF_bins_half) * (static_cast<float>(CAF_bins_half) + 1.0F) / 2.0F - weighting_factor * (d_num_doppler_bins - doppler_index - 1) * static_cast<float>(d_num_doppler_bins - doppler_index) / 2.0F;
                                 if (d_both_signal_components)
                                     {
                                         accum[0] = 0;
                                         for (int i = doppler_index - CAF_bins_half; i < static_cast<int>(d_num_doppler_bins); i++)
                                             {
-                                                accum[0] += static_cast<float>(d_CAF_vector_Q[i] * (1.0F - weighting_factor * static_cast<float>(abs(doppler_index - i))));
+                                                accum[0] += d_CAF_vector_Q[i] * (1.0F - weighting_factor * static_cast<float>(abs(doppler_index - i)));
                                             }
                                         accum[0] /= static_cast<float>(1.0F + static_cast<float>(CAF_bins_half) + static_cast<float>(d_num_doppler_bins - doppler_index - 1) - weighting_factor * static_cast<float>(CAF_bins_half) * static_cast<float>(CAF_bins_half + 1.0) / 2.0 - weighting_factor * static_cast<float>(d_num_doppler_bins - doppler_index - 1) * static_cast<float>(d_num_doppler_bins - doppler_index) / 2.0);
                                         d_CAF_vector[doppler_index] += accum[0];
@@ -729,7 +743,7 @@ int galileo_e5a_noncoherentIQ_acquisition_caf_cc::general_work(int noutput_items
                         auto **out = reinterpret_cast<Gnss_Synchro **>(&output_items[0]);
                         Gnss_Synchro current_synchro_data = Gnss_Synchro();
                         current_synchro_data = *d_gnss_synchro;
-                        *out[0] = current_synchro_data;
+                        *out[0] = std::move(current_synchro_data);
                         return_value = 1;  // Number of Gnss_Synchro objects produced
                     }
 

@@ -113,7 +113,7 @@ macro(check_arch arch_name)
             set(have_flag have${flag})
             # make the have_flag have nice alphanum chars (just for looks/not necessary)
             execute_process(
-                COMMAND ${PYTHON_EXECUTABLE} -c "import re; print(re.sub('\\W', '_', '${have_flag}'))"
+                COMMAND ${PYTHON_EXECUTABLE} -c "import re; print(re.sub(r'\\W', '_', '${have_flag}'))"
                 OUTPUT_VARIABLE have_flag OUTPUT_STRIP_TRAILING_WHITESPACE
             )
             if(VOLK_FLAG_CHECK_FLAGS)
@@ -224,9 +224,9 @@ check_c_source_compiles("#include <arm_neon.h>\nint main(){ uint8_t *dest; uint8
 
 if(neon_compile_result)
     set(CMAKE_REQUIRED_INCLUDES ${PROJECT_SOURCE_DIR}/include)
-    check_c_source_compiles("#include <volk_gnsssdr/volk_gnsssdr_common.h>\n int main(){__VOLK_ASM __VOLK_VOLATILE(\"vrev32.8 q0, q0\");}"
+    check_c_source_compiles("#include <volk_gnsssdr/volk_gnsssdr_common.h>\n int main(){__VOLK_ASM(\"vrev32.8 q0, q0\");}"
         have_neonv7_result)
-    check_c_source_compiles("#include <volk_gnsssdr/volk_gnsssdr_common.h>\n int main(){__VOLK_ASM __VOLK_VOLATILE(\"sub v1.4s,v1.4s,v1.4s\");}"
+    check_c_source_compiles("#include <volk_gnsssdr/volk_gnsssdr_common.h>\n int main(){__VOLK_ASM(\"sub v1.4s,v1.4s,v1.4s\");}"
         have_neonv8_result)
 
     if(NOT have_neonv7_result)
@@ -372,14 +372,18 @@ if(MSVC)
         set(cmake_c_compiler_version "Microsoft Visual Studio 14.0")
     endif()
 else()
-    execute_process(COMMAND ${CMAKE_C_COMPILER} --version
-        OUTPUT_VARIABLE cmake_c_compiler_version
-    )
+    if(NOT CMAKE_CROSSCOMPILING)
+        execute_process(COMMAND ${CMAKE_C_COMPILER} --version
+            OUTPUT_VARIABLE cmake_c_compiler_version
+        )
+    endif()
 endif()
 if(NOT GRCBTU)
     set(GRCBTU "")
 endif()
-set(COMPILER_INFO "${CMAKE_C_COMPILER}:::${CMAKE_C_FLAGS_${GRCBTU}} ${CMAKE_C_FLAGS}\n${CMAKE_CXX_COMPILER}:::${CMAKE_CXX_FLAGS_${GRCBTU}} ${CMAKE_CXX_FLAGS}\n")
+if(NOT CMAKE_CROSSCOMPILING)
+    set(COMPILER_INFO "${CMAKE_C_COMPILER}:::${CMAKE_C_FLAGS_${GRCBTU}} ${CMAKE_C_FLAGS}\n${CMAKE_CXX_COMPILER}:::${CMAKE_CXX_FLAGS_${GRCBTU}} ${CMAKE_CXX_FLAGS}\n")
+endif()
 
 foreach(machine_name ${available_machines})
     # generate machine source
@@ -396,7 +400,9 @@ foreach(machine_name ${available_machines})
     if(NOT (CMAKE_GENERATOR STREQUAL Xcode))
         message(STATUS "BUILD INFO ::: ${machine_name} ::: ${COMPILER_NAME} ::: ${CMAKE_C_FLAGS_${CBTU}} ${CMAKE_C_FLAGS} ${${machine_name}_flags}")
     endif()
-    set(COMPILER_INFO "${COMPILER_INFO}${machine_name}:::${COMPILER_NAME}:::${CMAKE_C_FLAGS_${CBTU}} ${CMAKE_C_FLAGS} ${${machine_name}_flags}\n")
+    if(NOT CMAKE_CROSSCOMPILING)
+        set(COMPILER_INFO "${COMPILER_INFO}${machine_name}:::${COMPILER_NAME}:::${CMAKE_C_FLAGS_${CBTU}} ${CMAKE_C_FLAGS} ${${machine_name}_flags}\n")
+    endif()
     if(${machine_name}_flags AND NOT MSVC)
         set_source_files_properties(${machine_source} PROPERTIES COMPILE_FLAGS "${${machine_name}_flags}")
     endif()
@@ -407,11 +413,15 @@ foreach(machine_name ${available_machines})
 endforeach()
 
 # Convert to a C string to compile and display properly
-string(STRIP "${cmake_c_compiler_version}" cmake_c_compiler_version)
-string(STRIP ${COMPILER_INFO} COMPILER_INFO)
-message(STATUS "Compiler Version: ${cmake_c_compiler_version}")
-string(REPLACE "\n" " \\n" cmake_c_compiler_version ${cmake_c_compiler_version})
-string(REPLACE "\n" " \\n" COMPILER_INFO ${COMPILER_INFO})
+if(NOT CMAKE_CROSSCOMPILING)
+    string(STRIP "${cmake_c_compiler_version}" cmake_c_compiler_version)
+    string(REPLACE "\n" " \\n" cmake_c_compiler_version ${cmake_c_compiler_version})
+    message(STATUS "Compiler Version: ${cmake_c_compiler_version}")
+    string(STRIP ${COMPILER_INFO} COMPILER_INFO)
+    string(REPLACE "\n" " \\n" COMPILER_INFO ${COMPILER_INFO})
+else()
+    set(cmake_c_compiler_version "")
+endif()
 
 
 ########################################################################
@@ -481,7 +491,12 @@ endif()
 message(STATUS "Loading version ${VERSION} into constants...")
 
 # double escape for windows backslash path separators
-string(REPLACE "\\" "\\\\" prefix "${prefix}")
+if(NOT CMAKE_CROSSCOMPILING)
+    string(REPLACE "\\" "\\\\" prefix "${prefix}")
+    string(REPLACE "${CMAKE_SOURCE_DIR}" "$BUILD_DIR" COMPILER_INFO "${COMPILER_INFO}")
+else()
+    set(prefix "")
+endif()
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/constants.c.in
@@ -532,10 +547,11 @@ if(NOT (CMAKE_GENERATOR STREQUAL Xcode))
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     )
     if(USE_CPU_FEATURES)
-        if(CpuFeatures_FOUND)
+        set_source_files_properties(volk_gnsssdr_cpu.c PROPERTIES COMPILE_DEFINITIONS "VOLK_CPU_FEATURES=1")
+        if(CPUFEATURES_FOUND)
             target_include_directories(volk_gnsssdr_obj
                 PRIVATE
-                    $<TARGET_PROPERTY:CpuFeatures::cpu_features,INTERFACE_INCLUDE_DIRECTORIES>
+                    $<TARGET_PROPERTY:CpuFeature::cpu_features,INTERFACE_INCLUDE_DIRECTORIES>
             )
         else()
             target_include_directories(volk_gnsssdr_obj
@@ -548,68 +564,79 @@ if(NOT (CMAKE_GENERATOR STREQUAL Xcode))
     if(NOT MSVC)
         set_target_properties(volk_gnsssdr_obj PROPERTIES COMPILE_FLAGS "-fPIC")
     endif()
+else()
+    if(USE_CPU_FEATURES)
+        set_source_files_properties(volk_gnsssdr_cpu.c PROPERTIES COMPILE_DEFINITIONS "VOLK_CPU_FEATURES=1")
+    endif()
 endif()
 
 # Add dynamic library
-if(CMAKE_GENERATOR STREQUAL Xcode)
-    add_library(volk_gnsssdr SHARED ${volk_gnsssdr_sources})
-else()
-    add_library(volk_gnsssdr SHARED $<TARGET_OBJECTS:volk_gnsssdr_obj>)
-endif()
-if(USE_CPU_FEATURES)
-    if(CpuFeatures_FOUND)
-        target_link_libraries(volk_gnsssdr
-            PUBLIC ${volk_gnsssdr_libraries}
-            PRIVATE CpuFeatures::cpu_features
-        )
+# Note: new Xcode buildsystem does not allow building both static and dynamic libraries
+# so we only build dynamic if ENABLE_STATIC_LIBS is not enabled in that generator.
+# For other generators than XCode, the dynamic library is always built.
+if(NOT (ENABLE_STATIC_LIBS AND (CMAKE_GENERATOR STREQUAL Xcode)))
+    if(CMAKE_GENERATOR STREQUAL Xcode)
+        add_library(volk_gnsssdr SHARED ${volk_gnsssdr_sources})
     else()
-        target_link_libraries(volk_gnsssdr
-            PUBLIC ${volk_gnsssdr_libraries}
-            PRIVATE cpu_features
-        )
+        add_library(volk_gnsssdr SHARED $<TARGET_OBJECTS:volk_gnsssdr_obj>)
     endif()
-else()
-    target_link_libraries(volk_gnsssdr PUBLIC ${volk_gnsssdr_libraries})
-endif()
-target_include_directories(volk_gnsssdr
-    PUBLIC $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
-    PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/kernels>
-    PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-    PUBLIC $<INSTALL_INTERFACE:include>
-)
-if(USE_CPU_FEATURES)
-    if(CpuFeatures_FOUND)
-        target_include_directories(volk_gnsssdr
-            PRIVATE
-                $<TARGET_PROPERTY:CpuFeatures::cpu_features,INTERFACE_INCLUDE_DIRECTORIES>
-        )
+    if(USE_CPU_FEATURES)
+        if(CPUFEATURES_FOUND)
+            target_link_libraries(volk_gnsssdr
+                PUBLIC ${volk_gnsssdr_libraries}
+                PRIVATE CpuFeature::cpu_features
+            )
+        else()
+            target_link_libraries(volk_gnsssdr
+                PUBLIC ${volk_gnsssdr_libraries}
+                PRIVATE cpu_features
+            )
+        endif()
     else()
-        target_include_directories(volk_gnsssdr
-            PRIVATE
-                $<TARGET_PROPERTY:cpu_features,INTERFACE_INCLUDE_DIRECTORIES>
-        )
+        target_link_libraries(volk_gnsssdr PUBLIC ${volk_gnsssdr_libraries})
     endif()
-endif()
-# Configure target properties
-if(ORC_FOUND)
-    target_link_libraries(volk_gnsssdr PRIVATE ${ORC_LIBRARIES})
-endif()
-if(NOT MSVC)
-    target_link_libraries(volk_gnsssdr PUBLIC m)
-endif()
-set_target_properties(volk_gnsssdr PROPERTIES VERSION ${VERSION})
-set_target_properties(volk_gnsssdr PROPERTIES SOVERSION ${SOVERSION})
-set_target_properties(volk_gnsssdr PROPERTIES DEFINE_SYMBOL "volk_gnsssdr_EXPORTS")
+    target_include_directories(volk_gnsssdr
+        PUBLIC $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
+        PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/kernels>
+        PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+        PUBLIC $<INSTALL_INTERFACE:include>
+    )
 
-# Install locations
-install(TARGETS volk_gnsssdr
-    EXPORT VOLK_GNSSSDR-export
-    LIBRARY DESTINATION lib${LIB_SUFFIX} COMPONENT "volk_gnsssdr_runtime" # .so file
-    ARCHIVE DESTINATION lib${LIB_SUFFIX} COMPONENT "volk_gnsssdr_devel"   # .lib file
-    RUNTIME DESTINATION bin              COMPONENT "volk_gnsssdr_runtime" # .dll file
-)
+    if(USE_CPU_FEATURES)
+        if(CPUFEATURES_FOUND)
+            target_include_directories(volk_gnsssdr
+                PRIVATE
+                    $<TARGET_PROPERTY:CpuFeature::cpu_features,INTERFACE_INCLUDE_DIRECTORIES>
+            )
+        else()
+            target_include_directories(volk_gnsssdr
+                PRIVATE
+                    $<TARGET_PROPERTY:cpu_features,INTERFACE_INCLUDE_DIRECTORIES>
+            )
+        endif()
+    endif()
+
+    # Configure target properties
+    if(ORC_FOUND)
+        target_link_libraries(volk_gnsssdr PRIVATE ${ORC_LIBRARIES})
+    endif()
+    if(NOT MSVC)
+        target_link_libraries(volk_gnsssdr PUBLIC m)
+    endif()
+    set_target_properties(volk_gnsssdr PROPERTIES VERSION ${VERSION})
+    set_target_properties(volk_gnsssdr PROPERTIES SOVERSION ${SOVERSION})
+    set_target_properties(volk_gnsssdr PROPERTIES DEFINE_SYMBOL "volk_gnsssdr_EXPORTS")
+
+    # Install locations
+    install(TARGETS volk_gnsssdr
+        EXPORT VOLK_GNSSSDR-export
+        LIBRARY DESTINATION lib${LIB_SUFFIX} COMPONENT "volk_gnsssdr_runtime" # .so file
+        ARCHIVE DESTINATION lib${LIB_SUFFIX} COMPONENT "volk_gnsssdr_devel"   # .lib file
+        RUNTIME DESTINATION bin              COMPONENT "volk_gnsssdr_runtime" # .dll file
+    )
+endif()
 
 # Configure static library
 if(ENABLE_STATIC_LIBS)
@@ -620,9 +647,9 @@ if(ENABLE_STATIC_LIBS)
     endif()
     target_link_libraries(volk_gnsssdr_static PUBLIC ${volk_gnsssdr_libraries})
     if(USE_CPU_FEATURES)
-        if(CpuFeatures_FOUND)
+        if(CPUFEATURES_FOUND)
             target_link_libraries(volk_gnsssdr_static
-                PRIVATE CpuFeatures::cpu_features
+                PRIVATE CpuFeature::cpu_features
             )
         else()
             target_link_libraries(volk_gnsssdr_static
@@ -633,7 +660,9 @@ if(ENABLE_STATIC_LIBS)
     if(ORC_FOUND)
         target_link_libraries(volk_gnsssdr_static PUBLIC ${ORC_LIBRARIES_STATIC})
     endif()
-    target_link_libraries(volk_gnsssdr_static PRIVATE pthread)
+    if(NOT ANDROID)
+        target_link_libraries(volk_gnsssdr_static PRIVATE pthread)
+    endif()
     if(NOT MSVC)
         target_link_libraries(volk_gnsssdr_static PUBLIC m)
     endif()
@@ -645,7 +674,6 @@ if(ENABLE_STATIC_LIBS)
         PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     )
-
     set_target_properties(volk_gnsssdr_static PROPERTIES OUTPUT_NAME volk_gnsssdr)
 
     install(TARGETS volk_gnsssdr_static

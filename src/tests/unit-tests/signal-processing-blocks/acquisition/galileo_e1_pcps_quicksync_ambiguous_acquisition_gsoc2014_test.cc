@@ -20,6 +20,7 @@
 #include "fir_filter.h"
 #include "galileo_e1_pcps_quicksync_ambiguous_acquisition.h"
 #include "gen_signal_source.h"
+#include "gnss_block_factory.h"
 #include "gnss_block_interface.h"
 #include "gnss_sdr_valve.h"
 #include "gnss_synchro.h"
@@ -46,6 +47,11 @@
 #include <gnuradio/analog/sig_source.h>
 #else
 #include <gnuradio/analog/sig_source_c.h>
+#endif
+#if PMT_USES_BOOST_ANY
+namespace wht = boost;
+#else
+namespace wht = std;
 #endif
 
 DEFINE_double(e1_value_threshold, 0.3, "Value of the threshold for the acquisition");
@@ -88,7 +94,7 @@ void GalileoE1PcpsQuickSyncAmbiguousAcquisitionGSoC2014Test_msg_rx::msg_handler_
             rx_message = message;
             channel_internal_queue.push(rx_message);
         }
-    catch (const boost::bad_any_cast& e)
+    catch (const wht::bad_any_cast& e)
         {
             LOG(WARNING) << "msg_handler_channel_events Bad any_cast: " << e.what();
             rx_message = 0;
@@ -495,7 +501,7 @@ void GalileoE1PcpsQuickSyncAmbiguousAcquisitionGSoC2014Test::process_message()
             detection_counter++;
 
             // The term -5 is here to correct the additional delay introduced by the FIR filter
-            double delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - static_cast<double>(gnss_synchro.Acq_delay_samples - 5) * 1023.0 / (static_cast<double>(fs_in) * 1e-3));
+            double delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - (gnss_synchro.Acq_delay_samples - 5) * 1023.0 / (static_cast<double>(fs_in) * 1e-3));
             double doppler_error_hz = std::abs(expected_doppler_hz - gnss_synchro.Acq_doppler_hz);
 
             mse_delay += std::pow(delay_error_chips, 2);

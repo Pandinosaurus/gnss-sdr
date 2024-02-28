@@ -29,11 +29,12 @@
 GenSignalSource::GenSignalSource(std::shared_ptr<GNSSBlockInterface> signal_generator,
     std::shared_ptr<GNSSBlockInterface> filter,
     std::string role,
-    Concurrent_Queue<pmt::pmt_t> *queue __attribute__((unused))) : signal_generator_(std::move(signal_generator)),
-                                                                   filter_(std::move(filter)),
-                                                                   role_(std::move(role))
+    Concurrent_Queue<pmt::pmt_t> *queue __attribute__((unused)))
+    : signal_generator_(std::move(signal_generator)),
+      filter_(std::move(filter)),
+      role_(std::move(role)),
+      connected_(false)
 {
-    connected_ = false;
 }
 
 
@@ -69,7 +70,7 @@ void GenSignalSource::disconnect(gr::top_block_sptr top_block)
         filter_->get_left_block(), 0);
 
     signal_generator_->disconnect(top_block);
-    filter_->disconnect(top_block);
+    filter_->disconnect(std::move(top_block));
 
     connected_ = false;
 }

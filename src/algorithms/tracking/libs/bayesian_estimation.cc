@@ -29,40 +29,40 @@
  */
 
 #include "bayesian_estimation.h"
-
+#include <utility>
 
 Bayesian_estimator::Bayesian_estimator()
+    : kappa_prior(0),
+      nu_prior(0)
 {
-    int ny = 1;
-    mu_prior = arma::zeros(ny, 1);
-    kappa_prior = 0;
-    nu_prior = 0;
-    Psi_prior = arma::eye(ny, ny) * (nu_prior + ny + 1);
-
+    mu_prior = arma::zeros(1, 1);
     mu_est = mu_prior;
+    Psi_prior = arma::eye(1, 1) * (nu_prior + 1 + 1);
     Psi_est = Psi_prior;
 }
 
 
 Bayesian_estimator::Bayesian_estimator(int ny)
+    : kappa_prior(0),
+      nu_prior(0)
 {
     mu_prior = arma::zeros(ny, 1);
-    kappa_prior = 0;
-    nu_prior = 0;
-    Psi_prior = arma::eye(ny, ny) * (nu_prior + ny + 1);
-
     mu_est = mu_prior;
+
+    Psi_prior = arma::eye(ny, ny) * (nu_prior + ny + 1);
     Psi_est = Psi_prior;
 }
 
 
-Bayesian_estimator::Bayesian_estimator(const arma::vec& mu_prior_0, int kappa_prior_0, int nu_prior_0, const arma::mat& Psi_prior_0)
+Bayesian_estimator::Bayesian_estimator(const arma::vec& mu_prior_0,
+    int kappa_prior_0,
+    int nu_prior_0,
+    const arma::mat& Psi_prior_0)
+    : mu_prior(mu_prior_0),
+      Psi_prior(Psi_prior_0),
+      kappa_prior(kappa_prior_0),
+      nu_prior(nu_prior_0)
 {
-    mu_prior = mu_prior_0;
-    kappa_prior = kappa_prior_0;
-    nu_prior = nu_prior_0;
-    Psi_prior = Psi_prior_0;
-
     mu_est = mu_prior;
     Psi_est = Psi_prior;
 }
@@ -122,10 +122,10 @@ void Bayesian_estimator::update_sequential(const arma::vec& data)
             Psi_est = Psi_posterior / (nu_posterior + ny + 1);
         }
 
-    mu_prior = mu_posterior;
+    mu_prior = std::move(mu_posterior);
     kappa_prior = kappa_posterior;
     nu_prior = nu_posterior;
-    Psi_prior = Psi_posterior;
+    Psi_prior = std::move(Psi_posterior);
 }
 
 
@@ -161,10 +161,10 @@ void Bayesian_estimator::update_sequential(const arma::vec& data, const arma::ve
             Psi_est = Psi_posterior / (nu_posterior + ny + 1);
         }
 
-    mu_prior = mu_posterior;
+    mu_prior = std::move(mu_posterior);
     kappa_prior = kappa_posterior;
     nu_prior = nu_posterior;
-    Psi_prior = Psi_posterior;
+    Psi_prior = std::move(Psi_posterior);
 }
 
 

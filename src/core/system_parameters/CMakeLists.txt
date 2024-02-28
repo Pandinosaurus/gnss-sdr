@@ -6,6 +6,7 @@
 
 
 set(SYSTEM_PARAMETERS_SOURCES
+    gnss_almanac.cc
     gnss_ephemeris.cc
     gnss_satellite.cc
     gnss_signal.cc
@@ -16,6 +17,7 @@ set(SYSTEM_PARAMETERS_SOURCES
     galileo_almanac_helper.cc
     galileo_cnav_message.cc
     galileo_fnav_message.cc
+    galileo_has_data.cc
     galileo_inav_message.cc
     galileo_reduced_ced.cc
     beidou_dnav_navigation_message.cc
@@ -120,7 +122,7 @@ target_link_libraries(core_system_parameters
 # for gnss_sdr_make_unique.h
 target_include_directories(core_system_parameters
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/algorithms/libs
+        ${GNSSSDR_SOURCE_DIR}/src/algorithms/libs
 )
 
 if(ENABLE_CLANG_TIDY)

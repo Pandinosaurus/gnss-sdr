@@ -33,20 +33,21 @@ pulse_blanking_cc_sptr make_pulse_blanking_cc(float pfa, int32_t length,
 pulse_blanking_cc::pulse_blanking_cc(float pfa,
     int32_t length,
     int32_t n_segments_est,
-    int32_t n_segments_reset) : gr::block("pulse_blanking_cc",
-                                    gr::io_signature::make(1, 1, sizeof(gr_complex)),
-                                    gr::io_signature::make(1, 1, sizeof(gr_complex)))
+    int32_t n_segments_reset)
+    : gr::block("pulse_blanking_cc",
+          gr::io_signature::make(1, 1, sizeof(gr_complex)),
+          gr::io_signature::make(1, 1, sizeof(gr_complex))),
+      noise_power_estimation_(0.0),
+      pfa_(pfa),
+      length_(length),
+      n_segments_(0),
+      n_segments_est_(n_segments_est),
+      n_segments_reset_(n_segments_reset),
+      n_deg_fred_(2 * length),
+      last_filtered_(false)
 {
     const int32_t alignment_multiple = volk_get_alignment() / sizeof(gr_complex);
     set_alignment(std::max(1, alignment_multiple));
-    pfa_ = pfa;
-    length_ = length;
-    last_filtered_ = false;
-    n_segments_ = 0;
-    n_segments_est_ = n_segments_est;
-    n_segments_reset_ = n_segments_reset;
-    noise_power_estimation_ = 0.0;
-    n_deg_fred_ = 2 * length_;
     boost::math::chi_squared_distribution<float> my_dist_(n_deg_fred_);
     thres_ = boost::math::quantile(boost::math::complement(my_dist_, pfa_));
     zeros_ = volk_gnsssdr::vector<gr_complex>(length_);
@@ -68,18 +69,18 @@ int pulse_blanking_cc::general_work(int noutput_items, gr_vector_int &ninput_ite
             if ((n_segments_ < n_segments_est_) && (last_filtered_ == false))
                 {
                     noise_power_estimation_ = (static_cast<float>(n_segments_) * noise_power_estimation_ + segment_energy / static_cast<float>(n_deg_fred_)) / static_cast<float>(n_segments_ + 1);
-                    memcpy(out, in, sizeof(gr_complex) * length_);
+                    std::copy(in, in + length_, out);
                 }
             else
                 {
                     if ((segment_energy / noise_power_estimation_) > thres_)
                         {
-                            memcpy(out, zeros_.data(), sizeof(gr_complex) * length_);
+                            std::copy_n(zeros_.data(), length_, out);
                             last_filtered_ = true;
                         }
                     else
                         {
-                            memcpy(out, in, sizeof(gr_complex) * length_);
+                            std::copy(in, in + length_, out);
                             last_filtered_ = false;
                             if (n_segments_ > n_segments_reset_)
                                 {

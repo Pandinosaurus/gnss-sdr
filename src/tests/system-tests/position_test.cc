@@ -36,6 +36,8 @@
 #include "test_flags.h"
 #include "tracking_tests_flags.h"  // acquisition resampler
 #include <armadillo>
+#include <boost/exception/diagnostic_information.hpp>
+#include <boost/exception/exception.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 #include <matio.h>
@@ -44,6 +46,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <numeric>
 #include <thread>
 
@@ -309,6 +312,7 @@ int PositionSystemTest::configure_receiver()
 
             // Set PVT
             config->set_property("PVT.implementation", "RTKLIB_PVT");
+            config->set_property("PVT.enable_pvt_kf", "true");
             config->set_property("PVT.positioning_mode", "PPP_Static");
             config->set_property("PVT.output_rate_ms", std::to_string(output_rate_ms));
             config->set_property("PVT.display_rate_ms", std::to_string(display_rate_ms));

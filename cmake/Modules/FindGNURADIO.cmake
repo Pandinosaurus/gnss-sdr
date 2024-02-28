@@ -1,7 +1,7 @@
 # GNSS-SDR is a Global Navigation Satellite System software-defined receiver.
 # This file is part of GNSS-SDR.
 #
-# SPDX-FileCopyrightText: 2011-2020 C. Fernandez-Prades cfernandez(at)cttc.es
+# SPDX-FileCopyrightText: 2011-2022 C. Fernandez-Prades cfernandez(at)cttc.es
 # SPDX-License-Identifier: BSD-3-Clause
 
 ########################################################################
@@ -20,7 +20,7 @@ include(FindPackageHandleStandardArgs)
 
 # if GR_REQUIRED_COMPONENTS is not defined, it will be set to the following list
 if(NOT GR_REQUIRED_COMPONENTS)
-  set(GR_REQUIRED_COMPONENTS RUNTIME PMT BLOCKS FFT FILTER ANALOG)
+    set(GR_REQUIRED_COMPONENTS RUNTIME PMT BLOCKS FFT FILTER ANALOG)
 endif()
 
 # Allows us to use all .cmake files in this directory
@@ -193,6 +193,7 @@ gr_module(TRELLIS gnuradio-trellis gnuradio/trellis/api.h gnuradio-trellis)
 gr_module(UHD gnuradio-uhd gnuradio/uhd/api.h gnuradio-uhd)
 gr_module(VOCODER gnuradio-vocoder gnuradio/vocoder/api.h gnuradio-vocoder)
 gr_module(WAVELET gnuradio-wavelet gnuradio/wavelet/api.h gnuradio-wavelet)
+gr_module(ZEROMQ gnuradio-zeromq gnuradio/zeromq/api.h gnuradio-zeromq)
 
 
 list(REMOVE_DUPLICATES GNURADIO_ALL_INCLUDE_DIRS)
@@ -346,6 +347,8 @@ if(GNURADIO_VERSION VERSION_GREATER 3.8.99)
     if(GNURADIO_IIO_LIBRARIES)
         message(STATUS " * INCLUDES=${GNURADIO_IIO_INCLUDE_DIRS}")
         message(STATUS " * LIBS=${GNURADIO_IIO_LIBRARIES}")
+    else()
+        message(STATUS " * IIO GNU Radio Module not found.")
     endif()
     if(GNURADIO_IIO_LIBRARIES AND GNURADIO_IIO_INCLUDE_DIRS)
         set(GNURADIO_IIO_FOUND TRUE)
@@ -369,9 +372,75 @@ if(GNURADIO_VERSION VERSION_GREATER 3.8.99)
                 INTERFACE_LINK_LIBRARIES "${GNURADIO_LIBRARY}"
             )
         endif()
+
+        # check templatized API
+        if(NOT EXISTS "${GNURADIO_IIO_INCLUDE_DIRS}/gnuradio/iio/pluto_source.h")
+            set(GR_IIO_TEMPLATIZED_API TRUE)
+        endif()
     endif()
 endif()
 
+# Check if PMT uses boost::any or std::any
+if(GNURADIO_PMT_INCLUDE_DIRS)
+    file(STRINGS ${GNURADIO_PMT_INCLUDE_DIRS}/pmt/pmt.h _pmt_content)
+    set(_uses_boost TRUE)
+    foreach(_loop_var IN LISTS _pmt_content)
+        string(STRIP "${_loop_var}" _file_line)
+        if("#include <any>" STREQUAL "${_file_line}")
+            set(_uses_boost FALSE)
+        endif()
+    endforeach()
+    if(${_uses_boost})
+        set(PMT_USES_BOOST_ANY TRUE)
+    endif()
+endif()
+
+# Check if GNU Radio uses log4cpp or spdlog
+if(GNURADIO_RUNTIME_INCLUDE_DIRS)
+    if(EXISTS "${GNURADIO_RUNTIME_INCLUDE_DIRS}/gnuradio/logger.h")
+        file(STRINGS ${GNURADIO_RUNTIME_INCLUDE_DIRS}/gnuradio/logger.h _logger_content)
+        set(_uses_log4cpp FALSE)
+        set(_uses_spdlog FALSE)
+        foreach(_loop_var IN LISTS _logger_content)
+            string(STRIP "${_loop_var}" _file_line)
+            if("#include <log4cpp/Category.hh>" STREQUAL "${_file_line}")
+                set(_uses_log4cpp TRUE)
+            endif()
+            if("#include <spdlog/spdlog.h>" STREQUAL "${_file_line}")
+                set(_uses_spdlog TRUE)
+            endif()
+        endforeach()
+        if(${_uses_log4cpp})
+            find_package(LOG4CPP)
+            set_package_properties(LOG4CPP PROPERTIES
+                PURPOSE "Required by GNU Radio."
+                TYPE REQUIRED
+            )
+            if(CMAKE_VERSION VERSION_GREATER 3.13)
+                target_link_libraries(Gnuradio::filter INTERFACE Log4cpp::log4cpp)
+            else()
+                set_target_properties(Gnuradio::filter PROPERTIES INTERFACE_LINK_LIBRARIES Log4cpp::log4cpp)
+            endif()
+        endif()
+        if(${_uses_spdlog})
+            find_package(spdlog REQUIRED CONFIG)
+            set_package_properties(spdlog PROPERTIES
+                URL "https://github.com/gabime/spdlog"
+                DESCRIPTION "Very fast, header-only/compiled, C++ logging library (found: v${spdlog_VERSION})"
+                PURPOSE "Required by GNU Radio."
+                TYPE REQUIRED
+            )
+            set(GNURADIO_USES_SPDLOG TRUE)
+            if(CMAKE_VERSION VERSION_GREATER 3.13)
+                target_link_libraries(Gnuradio::runtime INTERFACE spdlog::spdlog)
+                target_link_libraries(Gnuradio::blocks INTERFACE spdlog::spdlog)
+            else()
+                set_target_properties(Gnuradio::runtime PROPERTIES INTERFACE_LINK_LIBRARIES spdlog::spdlog)
+                set_target_properties(Gnuradio::blocks PROPERTIES INTERFACE_LINK_LIBRARIES spdlog::spdlog)
+            endif()
+        endif()
+    endif()
+endif()
 
 set_package_properties(GNURADIO PROPERTIES
     URL "https://www.gnuradio.org/"

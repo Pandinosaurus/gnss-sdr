@@ -5,13 +5,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 
-set(OPT_DRIVER_SOURCES "")
-set(OPT_DRIVER_HEADERS "")
 if(ENABLE_RAW_UDP AND PCAP_FOUND)
-    set(OPT_DRIVER_SOURCES gr_complex_ip_packet_source.cc)
-    set(OPT_DRIVER_HEADERS gr_complex_ip_packet_source.h)
+    list(APPEND OPT_DRIVER_SOURCES gr_complex_ip_packet_source.cc)
+    list(APPEND OPT_DRIVER_HEADERS gr_complex_ip_packet_source.h)
 endif()
 
+if(ENABLE_AD936X_SDR)
+    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} gr_complex_ip_packet_source.cc)
+    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} gr_complex_ip_packet_source.h)
+endif()
+
+
+if(ENABLE_PLUTOSDR)
+    set(OPT_DRIVER_SOURCES ${OPT_DRIVER_SOURCES} ad936x_iio_source.cc)
+    set(OPT_DRIVER_HEADERS ${OPT_DRIVER_HEADERS} ad936x_iio_source.h)
+endif()
 
 set(SIGNAL_SOURCE_GR_BLOCKS_SOURCES
     fifo_reader.cc
@@ -19,6 +27,7 @@ set(SIGNAL_SOURCE_GR_BLOCKS_SOURCES
     unpack_byte_2bit_cpx_samples.cc
     unpack_byte_4bit_samples.cc
     unpack_intspir_1bit_samples.cc
+    unpack_short_byte_samples.cc
     rtl_tcp_signal_source_c.cc
     unpack_2bit_samples.cc
     unpack_spir_gss6450_samples.cc
@@ -26,13 +35,13 @@ set(SIGNAL_SOURCE_GR_BLOCKS_SOURCES
     ${OPT_DRIVER_SOURCES}
 )
 
-
 set(SIGNAL_SOURCE_GR_BLOCKS_HEADERS
     fifo_reader.h
     unpack_byte_2bit_samples.h
     unpack_byte_2bit_cpx_samples.h
     unpack_byte_4bit_samples.h
     unpack_intspir_1bit_samples.h
+    unpack_short_byte_samples.h
     rtl_tcp_signal_source_c.h
     unpack_2bit_samples.h
     unpack_spir_gss6450_samples.h
@@ -72,7 +81,7 @@ target_link_libraries(signal_source_gr_blocks
 
 target_include_directories(signal_source_gr_blocks
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/core/receiver
+        ${GNSSSDR_SOURCE_DIR}/src/core/receiver
 )
 
 if(GNURADIO_USES_STD_POINTERS)
@@ -131,6 +140,17 @@ else()
     target_compile_definitions(signal_source_gr_blocks
         PRIVATE
             -DHAS_GENERIC_LAMBDA=0
+    )
+endif()
+
+if(Boost_VERSION_STRING VERSION_GREATER "1.57.99")
+    target_compile_definitions(signal_source_gr_blocks
+        PRIVATE
+            -DHAS_BOOST_ENDIAN=1
+    )
+    target_link_libraries(signal_source_gr_blocks
+        PRIVATE
+            Boost::headers
     )
 endif()
 

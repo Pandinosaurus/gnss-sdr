@@ -39,14 +39,15 @@
 #define GNSS_SDR_RINEX_PRINTER_H
 
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include <cstdint>  // for int32_t
-#include <cstdlib>  // for strtol, strtod
-#include <fstream>  // for fstream
-#include <iomanip>  // for setprecision
-#include <map>      // for map
-#include <sstream>  // for stringstream
-#include <string>   // for string
-#include <vector>
+#include <cstdint>        // for int32_t
+#include <cstdlib>        // for strtol, strtod
+#include <fstream>        // for fstream
+#include <iomanip>        // for setprecision
+#include <map>            // for map
+#include <sstream>        // for stringstream
+#include <string>         // for string
+#include <unordered_map>  // for unordered_map
+#include <vector>         // for vector
 
 
 /** \addtogroup PVT
@@ -98,7 +99,7 @@ public:
      * \brief Print RINEX annotation. If it is the first annotation, it also
      * prints the RINEX headers for navigation and observation files. If it is
      * not the first annotation, it only annotates the observation, and updates
-     * the navigation header if UTC data was not available when writting it for
+     * the navigation header if UTC data was not available when writing it for
      * the first time. The meaning of type_of_rx is as follows:
      *
      * type_of_rx    | Signals
@@ -142,6 +143,8 @@ public:
      *    104   |  Galileo E1B + Galileo E5a + Galileo E6B
      *    105   |  Galileo E1B + Galileo E5b + Galileo E6B
      *    106   |  GPS L1 C/A + Galileo E1B + Galileo E6B
+     *    107   |  GPS L1 C/A + Galileo E6B
+     *    108   |  GPS L1 C/A + Galileo E1B + GPS L5 + Galileo E5a + Galileo E6B
      *    500   |  BeiDou B1I
      *    501   |  BeiDou B1I + GPS L1 C/A
      *    502   |  BeiDou B1I + Galileo E1B
@@ -222,8 +225,8 @@ public:
     }
 
     /*!
-      * \brief Returns name of RINEX observation file
-      */
+     * \brief Returns name of RINEX observation file
+     */
     inline std::string get_obsfilename() const
     {
         return obsfilename;
@@ -231,6 +234,14 @@ public:
 
 
 private:
+    const std::unordered_map<std::string, std::string> satelliteSystem = {
+        {"GPS", "G"},
+        {"GLONASS", "R"},
+        {"SBAS payload", "S"},
+        {"Galileo", "E"},
+        {"Beidou", "C"},
+        {"Mixed", "M"}};  // RINEX v3.02 codes
+
     /*
      * Generates the GPS Observation data header
      */
@@ -983,7 +994,6 @@ private:
 
     inline std::string asFixWidthString(int x, int width, char fill_digit) const;
 
-    std::map<std::string, std::string> satelliteSystem;  // GPS, GLONASS, SBAS payload, Galileo or Beidou
     std::map<std::string, std::string> observationType;  // PSEUDORANGE, CARRIER_PHASE, DOPPLER, SIGNAL_STRENGTH
     std::map<std::string, std::string> observationCode;  // GNSS observation descriptors
 
@@ -1015,7 +1025,7 @@ private:
 };
 
 
-// Implementation of inline functions (modified versions from GPSTk https://github.com/SGL-UT/GPSTk)
+// Implementation of inline functions (modified versions from GNSSTk https://github.com/SGL-UT/gnsstk)
 
 inline std::string& Rinex_Printer::leftJustify(std::string& s,
     std::string::size_type length,

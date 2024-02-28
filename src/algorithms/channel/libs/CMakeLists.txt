@@ -45,7 +45,7 @@ target_link_libraries(channel_libs
 
 target_include_directories(channel_libs
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/core/receiver
+        ${GNSSSDR_SOURCE_DIR}/src/core/receiver
 )
 
 if(GNURADIO_USES_STD_POINTERS)
@@ -73,6 +73,16 @@ if(USE_BOOST_BIND_PLACEHOLDERS)
     target_compile_definitions(channel_libs
         PRIVATE
             -DUSE_BOOST_BIND_PLACEHOLDERS=1
+    )
+endif()
+
+if(PMT_USES_BOOST_ANY)
+    target_compile_definitions(channel_libs
+        PRIVATE -DPMT_USES_BOOST_ANY=1
+    )
+    target_link_libraries(channel_libs
+        PRIVATE
+            Boost::headers
     )
 endif()
 

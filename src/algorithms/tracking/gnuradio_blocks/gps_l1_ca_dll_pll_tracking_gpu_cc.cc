@@ -24,11 +24,13 @@
 #include <boost/lexical_cast.hpp>
 #include <glog/logging.h>
 #include <gnuradio/io_signature.h>
+#include <algorithm>
 #include <cmath>
 #include <cuda_profiler_api.h>
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <utility>
 
 
 gps_l1_ca_dll_pll_tracking_gpu_cc_sptr
@@ -134,7 +136,11 @@ Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc::Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc(
     systemName["G"] = std::string("GPS");
     systemName["S"] = std::string("SBAS");
 
-    set_relative_rate(1.0 / (static_cast<double>(d_vector_length) * 2.0));
+#if GNURADIO_GREATER_THAN_38
+    this->set_relative_rate(1, static_cast<uint64_t>(d_vector_length * 2));
+#else
+    this->set_relative_rate(1.0 / static_cast<double>(d_vector_length * 2));
+#endif
 
     d_acquisition_gnss_synchro = 0;
     d_channel = 0;
@@ -218,8 +224,7 @@ void Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc::start_tracking()
     d_pll_to_dll_assist_secs_Ti = 0.0;
     d_code_phase_samples = d_acq_code_phase_samples;
 
-    const std::string sys_ = &d_acquisition_gnss_synchro->System;
-    sys = sys_.substr(0, 1);
+    sys = std::string(1, d_acquisition_gnss_synchro->System);
 
     // DEBUG OUTPUT
     std::cout << "Tracking of GPS L1 C/A signal started on channel " << d_channel << " for satellite " << Gnss_Satellite(systemName[sys], d_acquisition_gnss_synchro->PRN) << '\n';
@@ -278,11 +283,11 @@ void Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc::set_channel(uint32_t channel)
                         {
                             d_dump_filename.append(boost::lexical_cast<std::string>(d_channel));
                             d_dump_filename.append(".dat");
-                            d_dump_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+                            d_dump_file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
                             d_dump_file.open(d_dump_filename.c_str(), std::ios::out | std::ios::binary);
                             LOG(INFO) << "Tracking dump enabled on channel " << d_channel << " Log file: " << d_dump_filename.c_str();
                         }
-                    catch (const std::ifstream::failure *e)
+                    catch (const std::ofstream::failure *e)
                         {
                             LOG(WARNING) << "channel " << d_channel << " Exception opening trk dump file " << e->what();
                         }
@@ -340,7 +345,7 @@ int Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc::general_work(int noutput_items __attribut
                     current_synchro_data.Tracking_sample_counter = d_sample_counter + static_cast<uint64_t>(samples_offset);
                     current_synchro_data.fs = d_fs_in;
                     current_synchro_data.correlation_length_ms = 1;
-                    *out[0] = current_synchro_data;
+                    *out[0] = std::move(current_synchro_data);
                     d_sample_counter += static_cast<uint64_t>(samples_offset);  // count for the processed samples
                     d_pull_in = false;
                     consume_each(samples_offset);  // shift input to perform alignment with local replica
@@ -350,7 +355,7 @@ int Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc::general_work(int noutput_items __attribut
             // ################# CARRIER WIPEOFF AND CORRELATORS ##############################
             // perform carrier wipe-off and compute Early, Prompt and Late correlation
 
-            memcpy(in_gpu, in, sizeof(gr_complex) * d_correlation_length_samples);
+            std::copy(in, in + d_correlation_length_samples, in_gpu);
             cudaProfilerStart();
             multicorrelator_gpu->Carrier_wipeoff_multicorrelator_resampler_cuda(static_cast<float>(d_rem_carrier_phase_rad),
                 static_cast<float>(d_carrier_phase_step_rad),
@@ -475,7 +480,7 @@ int Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc::general_work(int noutput_items __attribut
 
     // assign the GNU Radio block output data
     current_synchro_data.fs = d_fs_in;
-    *out[0] = current_synchro_data;
+    *out[0] = std::move(current_synchro_data);
 
     if (d_dump)
         {
@@ -536,7 +541,7 @@ int Gps_L1_Ca_Dll_Pll_Tracking_GPU_cc::general_work(int noutput_items __attribut
                     uint32_t prn_ = d_acquisition_gnss_synchro->PRN;
                     d_dump_file.write(reinterpret_cast<char *>(&prn_), sizeof(uint32_t));
                 }
-            catch (const std::ifstream::failure *e)
+            catch (const std::ofstream::failure *e)
                 {
                     LOG(WARNING) << "Exception writing trk dump file " << e->what();
                 }

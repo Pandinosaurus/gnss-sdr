@@ -28,11 +28,10 @@
 #include <sstream>    // for stringstream
 
 
-Gpx_Printer::Gpx_Printer(const std::string& base_path)
+Gpx_Printer::Gpx_Printer(const std::string& base_path) : indent("  "),
+                                                         gpx_base_path(base_path),
+                                                         positions_printed(false)
 {
-    positions_printed = false;
-    indent = "  ";
-    gpx_base_path = base_path;
     fs::path full_path(fs::current_path());
     const fs::path p(gpx_base_path);
     if (!fs::exists(p))
@@ -141,12 +140,8 @@ bool Gpx_Printer::set_headers(const std::string& filename, bool time_tag_name)
 }
 
 
-bool Gpx_Printer::print_position(const Pvt_Solution* const position, bool print_average_values)
+bool Gpx_Printer::print_position(const Pvt_Solution* const position)
 {
-    double latitude;
-    double longitude;
-    double height;
-
     positions_printed = true;
 
     const double speed_over_ground = position->get_speed_over_ground();    // expressed in m/s
@@ -163,18 +158,9 @@ bool Gpx_Printer::print_position(const Pvt_Solution* const position, bool print_
     utc_time.resize(23, '0');  // time up to ms
     utc_time.append("Z");      // UTC time zone
 
-    if (print_average_values == false)
-        {
-            latitude = position->get_latitude();
-            longitude = position->get_longitude();
-            height = position->get_height();
-        }
-    else
-        {
-            latitude = position->get_avg_latitude();
-            longitude = position->get_avg_longitude();
-            height = position->get_avg_height();
-        }
+    const double latitude = position->get_latitude();
+    const double longitude = position->get_longitude();
+    const double height = position->get_height();
 
     if (gpx_file.is_open())
         {

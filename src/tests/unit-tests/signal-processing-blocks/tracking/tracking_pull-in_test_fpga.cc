@@ -67,6 +67,11 @@
 #include <gnuradio/filter/fir_filter_ccf.h>
 #endif
 
+#if PMT_USES_BOOST_ANY
+namespace wht = boost;
+#else
+namespace wht = std;
+#endif
 
 // ######## GNURADIO TRACKING BLOCK MESSAGE RECEVER #########
 class TrackingPullInTest_msg_rx_Fpga;
@@ -101,7 +106,7 @@ void TrackingPullInTest_msg_rx_Fpga::msg_handler_channel_events(const pmt::pmt_t
             int64_t message = pmt::to_long(std::move(msg));
             rx_message = message;  // 3 -> loss of lock
         }
-    catch (const boost::bad_any_cast& e)
+    catch (const wht::bad_any_cast& e)
         {
             LOG(WARNING) << "msg_handler_tracking Bad cast!";
             rx_message = 0;
@@ -186,9 +191,9 @@ void* handler_DMA_trk_pull_in_test(void* arguments)
             return nullptr;
         }
 
-    //**************************************************************************
+    // *************************************************************************
     // Open DMA device
-    //**************************************************************************
+    // *************************************************************************
     tx_fd = open("/dev/loop_tx", O_WRONLY);
     if (tx_fd < 0)
         {
@@ -196,9 +201,9 @@ void* handler_DMA_trk_pull_in_test(void* arguments)
             return nullptr;
         }
 
-    //**************************************************************************
+    // *************************************************************************
     // Open input file
-    //**************************************************************************
+    // *************************************************************************
     uint32_t skip_samples = static_cast<uint32_t>(FLAGS_skip_samples);
 
     if (skip_samples + skip_used_samples > 0)

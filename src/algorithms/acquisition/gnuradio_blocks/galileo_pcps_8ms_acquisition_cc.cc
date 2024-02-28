@@ -21,6 +21,7 @@
 #include <gnuradio/io_signature.h>
 #include <volk/volk.h>
 #include <volk_gnsssdr/volk_gnsssdr.h>
+#include <algorithm>
 #include <array>
 #include <exception>
 #include <sstream>
@@ -52,46 +53,43 @@ galileo_pcps_8ms_acquisition_cc::galileo_pcps_8ms_acquisition_cc(
     int32_t samples_per_code,
     bool dump,
     const std::string &dump_filename,
-    bool enable_monitor_output) : gr::block("galileo_pcps_8ms_acquisition_cc",
-                                      gr::io_signature::make(1, 1, static_cast<int>(sizeof(gr_complex) * sampled_ms * samples_per_ms)),
-                                      gr::io_signature::make(0, 1, sizeof(Gnss_Synchro)))
+    bool enable_monitor_output)
+    : gr::block("galileo_pcps_8ms_acquisition_cc",
+          gr::io_signature::make(1, 1, static_cast<int>(sizeof(gr_complex) * sampled_ms * samples_per_ms)),
+          gr::io_signature::make(0, 1, sizeof(Gnss_Synchro))),
+      d_dump_filename(dump_filename),
+      d_gnss_synchro(nullptr),
+      d_fs_in(fs_in),
+      d_sample_counter(0ULL),
+      d_threshold(0),
+      d_doppler_freq(0),
+      d_mag(0),
+      d_input_power(0.0),
+      d_test_statistics(0),
+      d_state(0),
+      d_samples_per_ms(samples_per_ms),
+      d_samples_per_code(samples_per_code),
+      d_channel(0),
+      d_doppler_resolution(0),
+      d_doppler_max(doppler_max),
+      d_doppler_step(0),
+      d_sampled_ms(sampled_ms),
+      d_max_dwells(max_dwells),
+      d_well_count(0),
+      d_fft_size(d_sampled_ms * d_samples_per_ms),
+      d_num_doppler_bins(0),
+      d_code_phase(0),
+      d_active(false),
+      d_dump(dump),
+      d_enable_monitor_output(enable_monitor_output)
 {
     this->message_port_register_out(pmt::mp("events"));
-    d_sample_counter = 0ULL;  // SAMPLE COUNTER
-    d_active = false;
-    d_state = 0;
-    d_fs_in = fs_in;
-    d_samples_per_ms = samples_per_ms;
-    d_samples_per_code = samples_per_code;
-    d_sampled_ms = sampled_ms;
-    d_max_dwells = max_dwells;
-    d_well_count = 0;
-    d_doppler_max = doppler_max;
-    d_fft_size = d_sampled_ms * d_samples_per_ms;
-    d_mag = 0;
-    d_input_power = 0.0;
-    d_num_doppler_bins = 0;
 
     d_fft_code_A = std::vector<gr_complex>(d_fft_size, lv_cmake(0.0F, 0.0F));
     d_fft_code_B = std::vector<gr_complex>(d_fft_size, lv_cmake(0.0F, 0.0F));
     d_magnitude = std::vector<float>(d_fft_size, 0.0F);
     d_fft_if = gnss_fft_fwd_make_unique(d_fft_size);
     d_ifft = gnss_fft_rev_make_unique(d_fft_size);
-
-    // For dumping samples into a file
-    d_dump = dump;
-    d_dump_filename = dump_filename;
-
-    d_enable_monitor_output = enable_monitor_output;
-
-    d_doppler_resolution = 0;
-    d_threshold = 0;
-    d_doppler_step = 0;
-    d_gnss_synchro = nullptr;
-    d_code_phase = 0;
-    d_doppler_freq = 0;
-    d_test_statistics = 0;
-    d_channel = 0;
 }
 
 
@@ -118,7 +116,7 @@ galileo_pcps_8ms_acquisition_cc::~galileo_pcps_8ms_acquisition_cc()
 void galileo_pcps_8ms_acquisition_cc::set_local_code(std::complex<float> *code)
 {
     // code A: two replicas of a primary code
-    memcpy(d_fft_if->get_inbuf(), code, sizeof(gr_complex) * d_fft_size);
+    std::copy(code, code + d_fft_size, d_fft_if->get_inbuf());
 
     d_fft_if->execute();  // We need the FFT of local code
 
@@ -126,10 +124,16 @@ void galileo_pcps_8ms_acquisition_cc::set_local_code(std::complex<float> *code)
     volk_32fc_conjugate_32fc(d_fft_code_A.data(), d_fft_if->get_outbuf(), d_fft_size);
 
     // code B: two replicas of a primary code; the second replica is inverted.
+#if VOLK_EQUAL_OR_GREATER_31
+    auto minus_one = gr_complex(-1, 0);
+    volk_32fc_s32fc_multiply2_32fc(&(d_fft_if->get_inbuf())[d_samples_per_code],
+        &code[d_samples_per_code], &minus_one,
+        d_samples_per_code);
+#else
     volk_32fc_s32fc_multiply_32fc(&(d_fft_if->get_inbuf())[d_samples_per_code],
         &code[d_samples_per_code], gr_complex(-1, 0),
         d_samples_per_code);
-
+#endif
     d_fft_if->execute();  // We need the FFT of local code
 
     // Conjugate the local code
@@ -219,7 +223,7 @@ int galileo_pcps_8ms_acquisition_cc::general_work(int noutput_items,
                         d_state = 1;
                     }
 
-                d_sample_counter += static_cast<uint64_t>(d_fft_size * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_fft_size) * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 break;
@@ -371,7 +375,7 @@ int galileo_pcps_8ms_acquisition_cc::general_work(int noutput_items,
                 d_active = false;
                 d_state = 0;
 
-                d_sample_counter += d_fft_size * ninput_items[0];  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_fft_size) * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 acquisition_message = 1;
@@ -383,7 +387,7 @@ int galileo_pcps_8ms_acquisition_cc::general_work(int noutput_items,
                         auto **out = reinterpret_cast<Gnss_Synchro **>(&output_items[0]);
                         Gnss_Synchro current_synchro_data = Gnss_Synchro();
                         current_synchro_data = *d_gnss_synchro;
-                        *out[0] = current_synchro_data;
+                        *out[0] = std::move(current_synchro_data);
                         noutput_items = 1;  // Number of Gnss_Synchro objects produced
                     }
 
@@ -406,7 +410,7 @@ int galileo_pcps_8ms_acquisition_cc::general_work(int noutput_items,
                 d_active = false;
                 d_state = 0;
 
-                d_sample_counter += static_cast<uint64_t>(d_fft_size * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_fft_size) * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 acquisition_message = 2;

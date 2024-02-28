@@ -22,6 +22,7 @@ instructions) at runtime.
 - [Android NDK's drop in replacement](#ndk)
 - [License](#license)
 - [Build with cmake](#cmake)
+- [Community Bindings](#bindings)
 
 <a name="rationale"></a>
 
@@ -157,14 +158,14 @@ flags           : aes,avx,cx16,smx,sse4_1,sse4_2,ssse3
 
 ## What's supported
 
-|         | x86³ |   ARM   | AArch64 |  MIPS⁴  |  POWER  |
-| ------- | :--: | :-----: | :-----: | :-----: | :-----: |
-| Android | yes² |  yes¹   |  yes¹   |  yes¹   |   N/A   |
-| iOS     | N/A  | not yet | not yet |   N/A   |   N/A   |
-| Linux   | yes² |  yes¹   |  yes¹   |  yes¹   |  yes¹   |
-| MacOS   | yes² |   N/A   |  yes²   |   N/A   |   no    |
-| Windows | yes² | not yet | not yet |   N/A   |   N/A   |
-| FreeBSD | yes² | not yet | not yet | not yet | not yet |
+|         | x86³ | AArch64 |   ARM   |  MIPS⁴  |  POWER  | RISCV | Loongarch |  s390x  |
+| ------- | :--: | :-----: | :-----: | :-----: | :-----: | :---: | :-------: | :-----: |
+| Linux   | yes² |  yes¹   |  yes¹   |  yes¹   |  yes¹   | yes¹  |   yes¹    |  yes¹   |
+| FreeBSD | yes² | not yet | not yet | not yet | not yet |  N/A  |  not yet  | not yet |
+| MacOs   | yes² |  yes⁵   |   N/A   |   N/A   |   N/A   |  N/A  |    N/A    |   N/A   |
+| Windows | yes² | not yet | not yet |   N/A   |   N/A   |  N/A  |    N/A    |   N/A   |
+| Android | yes² |  yes¹   |  yes¹   |  yes¹   |   N/A   |  N/A  |    N/A    |   N/A   |
+| iOS     | N/A  | not yet | not yet |   N/A   |   N/A   |  N/A  |    N/A    |   N/A   |
 
 1.  **Features revealed from Linux.** We gather data from several sources
     depending on availability:
@@ -179,6 +180,8 @@ flags           : aes,avx,cx16,smx,sse4_1,sse4_2,ssse3
     microarchitecture allows the client to reject particular microarchitectures.
 4.  All flavors of Mips are supported, little and big endian as well as 32/64
     bits.
+5.  **Features revealed from sysctl.** features are retrieved by the `sysctl`
+    instruction.
 
 <a name="ndk"></a>
 
@@ -186,8 +189,8 @@ flags           : aes,avx,cx16,smx,sse4_1,sse4_2,ssse3
 
 [cpu_features](https://github.com/google/cpu_features) is now officially
 supporting Android and offers a drop in replacement of for the NDK's
-[cpu-features.h](https://android.googlesource.com/platform/ndk/+/master/sources/android/cpufeatures/cpu-features.h)
-, see [ndk_compat](ndk_compat) folder for details.
+[cpu-features.h](https://android.googlesource.com/platform/ndk/+/master/sources/android/cpufeatures/cpu-features.h),
+see [ndk_compat](ndk_compat) folder for details.
 
 <a name="license"></a>
 
@@ -204,20 +207,56 @@ Please check the [CMake build instructions](cmake/README.md).
 
 <a name="quickstart"></a>
 
-### Quickstart with `Ninja`
+### Quickstart
 
-- build `list_cpu_features`
+- Run `list_cpu_features`
 
-```
-    cmake -B/tmp/cpu_features -H. -GNinja -DCMAKE_BUILD_TYPE=Release
-    ninja -C/tmp/cpu_features
-    /tmp/cpu_features/list_cpu_features --json
-```
+  ```sh
+  cmake -S. -Bbuild -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+  cmake --build build --config Release -j
+  ./build/list_cpu_features --json
+  ```
+
+  _Note_: Use `--target ALL_BUILD` on the second line for `Visual Studio` and
+  `XCode`.
 
 - run tests
 
-```
-    cmake -B/tmp/cpu_features -H. -GNinja -DBUILD_TESTING=ON
-    ninja -C/tmp/cpu_features
-    ninja -C/tmp/cpu_features test
-```
+  ```sh
+  cmake -S. -Bbuild -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+  cmake --build build --config Debug -j
+  cmake --build build --config Debug --target test
+  ```
+
+  _Note_: Use `--target RUN_TESTS` on the last line for `Visual Studio` and
+  `--target RUN_TEST` for `XCode`.
+
+- install `cpu_features`
+
+  ```sh
+  cmake --build build --config Release --target install -v
+  ```
+
+  _Note_: Use `--target INSTALL` for `Visual Studio`.
+
+  _Note_: When using `Makefile` or `XCode` generator, you can use
+  [`DESTDIR`](https://www.gnu.org/software/make/manual/html_node/DESTDIR.html)
+  to install on a local repository.<br> e.g.
+
+  ```sh
+  cmake --build build --config Release --target install -v -- DESTDIR=install
+  ```
+
+<a name="bindings"></a>
+
+## Community bindings
+
+Links provided here are not affiliated with Google but are kindly provided by
+the OSS Community.
+
+- .Net
+  - https://github.com/toor1245/cpu_features.NET
+- Python
+  - https://github.com/Narasimha1997/py_cpu
+
+_Send PR to showcase your wrapper here_

@@ -20,7 +20,7 @@ endif()
 
 target_include_directories(obs_gr_blocks
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/algorithms/libs
+        ${GNSSSDR_SOURCE_DIR}/src/algorithms/libs
 )
 
 target_link_libraries(obs_gr_blocks
@@ -34,11 +34,12 @@ target_link_libraries(obs_gr_blocks
         Gflags::gflags
         Glog::glog
         Matio::matio
+        Gnuradio::pmt
 )
 
 target_include_directories(obs_gr_blocks
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/core/interfaces
+        ${GNSSSDR_SOURCE_DIR}/src/core/interfaces
 )
 
 if(GNURADIO_USES_STD_POINTERS)
@@ -66,6 +67,13 @@ if(USE_BOOST_BIND_PLACEHOLDERS)
     target_compile_definitions(obs_gr_blocks
         PRIVATE
             -DUSE_BOOST_BIND_PLACEHOLDERS=1
+    )
+endif()
+
+if(PMT_USES_BOOST_ANY)
+    target_compile_definitions(obs_gr_blocks
+        PRIVATE
+            -DPMT_USES_BOOST_ANY=1
     )
 endif()
 

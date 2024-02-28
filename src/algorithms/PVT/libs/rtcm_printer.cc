@@ -19,6 +19,7 @@
 
 #include "rtcm_printer.h"
 #include "galileo_ephemeris.h"
+#include "galileo_has_data.h"
 #include "glonass_gnav_ephemeris.h"
 #include "glonass_gnav_utc_model.h"
 #include "gnss_sdr_filesystem.h"
@@ -36,14 +37,26 @@
 #include <iostream>   // for cout, cerr
 #include <termios.h>  // for tcgetattr
 #include <unistd.h>   // for close, write
+#include <vector>     // for std::vector
 
 
-Rtcm_Printer::Rtcm_Printer(const std::string& filename, bool flag_rtcm_file_dump, bool flag_rtcm_server, bool flag_rtcm_tty_port, uint16_t rtcm_tcp_port, uint16_t rtcm_station_id, const std::string& rtcm_dump_devname, bool time_tag_name, const std::string& base_path)
+Rtcm_Printer::Rtcm_Printer(const std::string& filename,
+    bool flag_rtcm_file_dump,
+    bool flag_rtcm_server,
+    bool flag_rtcm_tty_port,
+    uint16_t rtcm_tcp_port,
+    uint16_t rtcm_station_id,
+    const std::string& rtcm_dump_devname,
+    bool time_tag_name,
+    const std::string& base_path) : rtcm_base_path(base_path),
+                                    rtcm_devname(rtcm_dump_devname),
+                                    port(rtcm_tcp_port),
+                                    station_id(rtcm_station_id),
+                                    d_rtcm_writing_started(false),
+                                    d_rtcm_file_dump(flag_rtcm_file_dump)
 {
     const boost::posix_time::ptime pt = boost::posix_time::second_clock::local_time();
     const tm timeinfo = boost::posix_time::to_tm(pt);
-    d_rtcm_file_dump = flag_rtcm_file_dump;
-    rtcm_base_path = base_path;
     if (d_rtcm_file_dump)
         {
             fs::path full_path(fs::current_path());
@@ -134,7 +147,6 @@ Rtcm_Printer::Rtcm_Printer(const std::string& filename, bool flag_rtcm_file_dump
                 }
         }
 
-    rtcm_devname = rtcm_dump_devname;
     if (flag_rtcm_tty_port == true)
         {
             rtcm_dev_descriptor = init_serial(rtcm_devname.c_str());
@@ -147,10 +159,6 @@ Rtcm_Printer::Rtcm_Printer(const std::string& filename, bool flag_rtcm_file_dump
         {
             rtcm_dev_descriptor = -1;
         }
-
-    port = rtcm_tcp_port;
-    station_id = rtcm_station_id;
-    d_rtcm_writing_started = false;
 
     rtcm = std::make_unique<Rtcm>(port);
 
@@ -773,7 +781,7 @@ void Rtcm_Printer::Print_Rtcm_Messages(const Rtklib_Solver* pvt_solver,
                                             Print_Rtcm_MT1019(gps_eph_iter.second);
                                         }
                                 }
-                            if (flag_write_RTCM_1045_output == true)
+                            if (rtcm_MT1045_rate_ms != 0)
                                 {
                                     for (const auto& gal_eph_iter : pvt_solver->galileo_ephemeris_map)
                                         {
@@ -782,33 +790,33 @@ void Rtcm_Printer::Print_Rtcm_Messages(const Rtklib_Solver* pvt_solver,
                                 }
                             if (flag_write_RTCM_MSM_output == true)
                                 {
-                                    auto gps_eph_iter = pvt_solver->gps_ephemeris_map.cbegin();
                                     auto gal_eph_iter = pvt_solver->galileo_ephemeris_map.cbegin();
-                                    int gps_channel = 0;
+                                    auto gps_eph_iter = pvt_solver->gps_ephemeris_map.cbegin();
                                     int gal_channel = 0;
+                                    int gps_channel = 0;
                                     for (const auto& gnss_observables_iter : gnss_observables_map)
                                         {
                                             const std::string system(gnss_observables_iter.second.System, 1);
-                                            if (gps_channel == 0)
-                                                {
-                                                    if (system == "G")
-                                                        {
-                                                            // This is a channel with valid GPS signal
-                                                            gps_eph_iter = pvt_solver->gps_ephemeris_map.find(gnss_observables_iter.second.PRN);
-                                                            if (gps_eph_iter != pvt_solver->gps_ephemeris_map.cend())
-                                                                {
-                                                                    gps_channel = 1;
-                                                                }
-                                                        }
-                                                }
                                             if (gal_channel == 0)
                                                 {
                                                     if (system == "E")
                                                         {
+                                                            // This is a channel with valid GPS signal
                                                             gal_eph_iter = pvt_solver->galileo_ephemeris_map.find(gnss_observables_iter.second.PRN);
                                                             if (gal_eph_iter != pvt_solver->galileo_ephemeris_map.cend())
                                                                 {
                                                                     gal_channel = 1;
+                                                                }
+                                                        }
+                                                }
+                                            if (gps_channel == 0)
+                                                {
+                                                    if (system == "G")
+                                                        {
+                                                            gps_eph_iter = pvt_solver->gps_ephemeris_map.find(gnss_observables_iter.second.PRN);
+                                                            if (gps_eph_iter != pvt_solver->gps_ephemeris_map.cend())
+                                                                {
+                                                                    gps_channel = 1;
                                                                 }
                                                         }
                                                 }
@@ -820,6 +828,23 @@ void Rtcm_Printer::Print_Rtcm_Messages(const Rtklib_Solver* pvt_solver,
                                     if (gal_eph_iter != pvt_solver->galileo_ephemeris_map.cend())
                                         {
                                             Print_Rtcm_MSM(7, {}, {}, gal_eph_iter->second, {}, rx_time, gnss_observables_map, enable_rx_clock_correction, 0, 0, false, false);
+                                        }
+                                }
+                            break;
+                        case 107:  // GPS L1 C/A + Galileo E6B (print only GPS data)
+                            if (flag_write_RTCM_1019_output == true)
+                                {
+                                    for (const auto& gps_eph_iter : pvt_solver->gps_ephemeris_map)
+                                        {
+                                            Print_Rtcm_MT1019(gps_eph_iter.second);
+                                        }
+                                }
+                            if (flag_write_RTCM_MSM_output == true)
+                                {
+                                    const auto gps_eph_iter = pvt_solver->gps_ephemeris_map.cbegin();
+                                    if (gps_eph_iter != pvt_solver->gps_ephemeris_map.cend())
+                                        {
+                                            Print_Rtcm_MSM(7, gps_eph_iter->second, {}, {}, {}, rx_time, gnss_observables_map, enable_rx_clock_correction, 0, 0, false, false);
                                         }
                                 }
                             break;
@@ -1396,31 +1421,31 @@ void Rtcm_Printer::Print_Rtcm_Messages(const Rtklib_Solver* pvt_solver,
                                 {
                                     auto gal_eph_iter = pvt_solver->galileo_ephemeris_map.cbegin();
                                     auto gps_eph_iter = pvt_solver->gps_ephemeris_map.cbegin();
-                                    int gps_channel = 0;
                                     int gal_channel = 0;
+                                    int gps_channel = 0;
                                     for (const auto& gnss_observables_iter : gnss_observables_map)
                                         {
                                             const std::string system(gnss_observables_iter.second.System, 1);
-                                            if (gps_channel == 0)
-                                                {
-                                                    if (system == "G")
-                                                        {
-                                                            // This is a channel with valid GPS signal
-                                                            gps_eph_iter = pvt_solver->gps_ephemeris_map.find(gnss_observables_iter.second.PRN);
-                                                            if (gps_eph_iter != pvt_solver->gps_ephemeris_map.cend())
-                                                                {
-                                                                    gps_channel = 1;
-                                                                }
-                                                        }
-                                                }
                                             if (gal_channel == 0)
                                                 {
                                                     if (system == "E")
                                                         {
+                                                            // This is a channel with valid GPS signal
                                                             gal_eph_iter = pvt_solver->galileo_ephemeris_map.find(gnss_observables_iter.second.PRN);
                                                             if (gal_eph_iter != pvt_solver->galileo_ephemeris_map.cend())
                                                                 {
                                                                     gal_channel = 1;
+                                                                }
+                                                        }
+                                                }
+                                            if (gps_channel == 0)
+                                                {
+                                                    if (system == "G")
+                                                        {
+                                                            gps_eph_iter = pvt_solver->gps_ephemeris_map.find(gnss_observables_iter.second.PRN);
+                                                            if (gps_eph_iter != pvt_solver->gps_ephemeris_map.cend())
+                                                                {
+                                                                    gps_channel = 1;
                                                                 }
                                                         }
                                                 }
@@ -1436,9 +1461,78 @@ void Rtcm_Printer::Print_Rtcm_Messages(const Rtklib_Solver* pvt_solver,
                                 }
                             d_rtcm_writing_started = true;
                             break;
+                        case 107:
+                            if (rtcm_MT1019_rate_ms != 0)  // allows deactivating messages by setting rate = 0
+                                {
+                                    for (const auto& gps_eph_iter : pvt_solver->gps_ephemeris_map)
+                                        {
+                                            Print_Rtcm_MT1019(gps_eph_iter.second);
+                                        }
+                                }
+                            if (rtcm_MSM_rate_ms != 0)
+                                {
+                                    auto gps_eph_iter = pvt_solver->gps_ephemeris_map.cbegin();
+                                    int gps_channel = 0;
+                                    for (const auto& gnss_observables_iter : gnss_observables_map)
+                                        {
+                                            const std::string system(gnss_observables_iter.second.System, 1);
+                                            if (gps_channel == 0)
+                                                {
+                                                    if (system == "G")
+                                                        {
+                                                            // This is a channel with valid GPS signal
+                                                            gps_eph_iter = pvt_solver->gps_ephemeris_map.find(gnss_observables_iter.second.PRN);
+                                                            if (gps_eph_iter != pvt_solver->gps_ephemeris_map.cend())
+                                                                {
+                                                                    gps_channel = 1;
+                                                                }
+                                                        }
+                                                }
+                                        }
+                                    if (gps_eph_iter != pvt_solver->gps_ephemeris_map.cend())
+                                        {
+                                            Print_Rtcm_MSM(7, gps_eph_iter->second, {}, {}, {}, rx_time, gnss_observables_map, enable_rx_clock_correction, 0, 0, false, false);
+                                        }
+                                }
+                            d_rtcm_writing_started = true;
+                            break;
                         default:
                             break;
                         }
+                }
+        }
+    catch (const boost::exception& ex)
+        {
+            std::cout << "RTCM boost exception: " << boost::diagnostic_information(ex) << '\n';
+            LOG(ERROR) << "RTCM boost exception: " << boost::diagnostic_information(ex);
+        }
+    catch (const std::exception& ex)
+        {
+            std::cout << "RTCM std exception: " << ex.what() << '\n';
+            LOG(ERROR) << "RTCM std exception: " << ex.what();
+        }
+}
+
+
+void Rtcm_Printer::Print_IGM_Messages(const Galileo_HAS_data& has_data)
+{
+    try
+        {
+            if (has_data.header.orbit_correction_flag && has_data.header.clock_fullset_flag)
+                {
+                    Print_IGM03(has_data);
+                }
+            if (has_data.header.orbit_correction_flag && !has_data.header.clock_fullset_flag)
+                {
+                    Print_IGM01(has_data);
+                }
+            if (!has_data.header.orbit_correction_flag && has_data.header.clock_fullset_flag)
+                {
+                    Print_IGM02(has_data);
+                }
+            if (has_data.header.code_bias_flag)
+                {
+                    Print_IGM05(has_data);
                 }
         }
     catch (const boost::exception& ex)
@@ -1589,6 +1683,66 @@ bool Rtcm_Printer::Print_Rtcm_MSM(uint32_t msm_number, const Gps_Ephemeris& gps_
         }
 
     Rtcm_Printer::Print_Message(msm);
+    return true;
+}
+
+
+bool Rtcm_Printer::Print_IGM01(const Galileo_HAS_data& has_data)
+{
+    const std::vector<std::string> msgs = rtcm->print_IGM01(has_data);
+    if (msgs.empty())
+        {
+            return false;
+        }
+    for (const auto& s : msgs)
+        {
+            Rtcm_Printer::Print_Message(s);
+        }
+    return true;
+}
+
+
+bool Rtcm_Printer::Print_IGM02(const Galileo_HAS_data& has_data)
+{
+    const std::vector<std::string> msgs = rtcm->print_IGM02(has_data);
+    if (msgs.empty())
+        {
+            return false;
+        }
+    for (const auto& s : msgs)
+        {
+            Rtcm_Printer::Print_Message(s);
+        }
+    return true;
+}
+
+
+bool Rtcm_Printer::Print_IGM03(const Galileo_HAS_data& has_data)
+{
+    const std::vector<std::string> msgs = rtcm->print_IGM03(has_data);
+    if (msgs.empty())
+        {
+            return false;
+        }
+    for (const auto& s : msgs)
+        {
+            Rtcm_Printer::Print_Message(s);
+        }
+    return true;
+}
+
+
+bool Rtcm_Printer::Print_IGM05(const Galileo_HAS_data& has_data)
+{
+    const std::vector<std::string> msgs = rtcm->print_IGM05(has_data);
+    if (msgs.empty())
+        {
+            return false;
+        }
+    for (const auto& s : msgs)
+        {
+            Rtcm_Printer::Print_Message(s);
+        }
     return true;
 }
 

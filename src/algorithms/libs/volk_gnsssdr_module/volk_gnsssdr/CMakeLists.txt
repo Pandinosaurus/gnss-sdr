@@ -8,10 +8,7 @@
 ########################################################################
 # Project setup
 ########################################################################
-cmake_minimum_required(VERSION 2.8.12...3.21)
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Release")
-endif()
+cmake_minimum_required(VERSION 2.8.12...3.28)
 set(CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE} CACHE STRING "Choose build type: None Debug Release RelWithDebInfo MinSizeRel")
 project(volk_gnsssdr)
 enable_language(CXX)
@@ -209,7 +206,7 @@ message(STATUS "Build type set to ${CMAKE_BUILD_TYPE}.")
 
 set(VERSION_INFO_MAJOR_VERSION 0)
 set(VERSION_INFO_MINOR_VERSION 0)
-set(VERSION_INFO_MAINT_VERSION 15)
+set(VERSION_INFO_MAINT_VERSION 19)
 include(VolkGnsssdrVersion) # setup version info
 
 
@@ -227,7 +224,11 @@ endif()
 set(CROSSCOMPILE_MULTILIB ${CROSSCOMPILE_MULTILIB} CACHE STRING "Define \"true\" if you have and want to use multiple C development libs installed for cross compile")
 
 if(MSVC)
-    add_definitions(-D_USE_MATH_DEFINES) # enables math constants on all supported versions of MSVC
+    if(CMAKE_VERSION VERSION_GREATER 3.12.0)
+        add_compile_definitions(_USE_MATH_DEFINES) # enables math constants on all supported versions of MSVC
+    else()
+        add_definitions(-D_USE_MATH_DEFINES) # enables math constants on all supported versions of MSVC
+    endif()
     add_compile_options(/W1) # reduce warnings
     add_compile_options(/wo4309)
     add_compile_options(/wd4752)
@@ -237,11 +238,11 @@ endif()
 
 # allow 'large' files in 32 bit builds
 if(UNIX)
-    add_definitions(-D_LARGEFILE_SOURCE
-        -D_FILE_OFFSET_BITS=64
-        -D_LARGE_FILES
-        -D_FORTIFY_SOURCE=2
-    )
+    if(CMAKE_VERSION VERSION_GREATER 3.12.0)
+        add_compile_definitions(_LARGEFILE_SOURCE _FILE_OFFSET_BITS=64 _LARGE_FILES)
+    else()
+        add_definitions(-D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES)
+    endif()
 endif()
 
 
@@ -250,53 +251,72 @@ endif()
 ########################################################################
 
 # cpu_features
-option(ENABLE_OWN_CPUFEATURES "Force the building of the cpu_features library even if it is already installed" OFF)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^cortex")
     set(CMAKE_SYSTEM_PROCESSOR arm-${CMAKE_SYSTEM_PROCESSOR})
 endif()
 
-set(SUPPORTED_CPU_FEATURES_ARCH FALSE)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^mips")
-    set(SUPPORTED_CPU_FEATURES_ARCH TRUE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(^aarch64)|(arm64)")
-    set(SUPPORTED_CPU_FEATURES_ARCH TRUE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
-    set(SUPPORTED_CPU_FEATURES_ARCH TRUE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD64|amd64)|(^i.86$)")
-    set(SUPPORTED_CPU_FEATURES_ARCH TRUE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(powerpc|ppc)")
-    set(SUPPORTED_CPU_FEATURES_ARCH TRUE)
+# cpu_features - sensible defaults, user settable option
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^mips" OR
+CMAKE_SYSTEM_PROCESSOR MATCHES "(^aarch64)|(^arm64)|(^ARM64)" OR
+CMAKE_SYSTEM_PROCESSOR MATCHES "^arm" OR
+CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(x86_64)|(AMD64|amd64)|(^i.86$)" OR
+CMAKE_SYSTEM_PROCESSOR MATCHES "^(powerpc|ppc)" OR
+CMAKE_SYSTEM_PROCESSOR MATCHES "^(s390x)" OR
+CMAKE_SYSTEM_PROCESSOR MATCHES "^riscv" OR
+CMAKE_SYSTEM_PROCESSOR MATCHES "^loongarch")
+    option(VOLK_CPU_FEATURES "volk-gnsssdr uses cpu_features" ON)
+else()
+    option(VOLK_CPU_FEATURES "volk-gnsssdr uses cpu_features" OFF)
 endif()
 
-if(CMAKE_VERSION VERSION_GREATER 3.0 AND SUPPORTED_CPU_FEATURES_ARCH)
-    set(BUILD_PIC ON CACHE BOOL
-        "Build cpu_features with Position Independent Code (PIC)."
-        FORCE
-    )
-    set(USE_CPU_FEATURES ON)
-    set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF)
-    if(NOT ENABLE_OWN_CPUFEATURES)
-        find_package(CPUFEATURES QUIET)
-    endif()
-    if(CPUFEATURES_FOUND)
-        message(STATUS "Found CpuFeatures: (found version ${CPUFEATURES_VERSION})")
+if(CMAKE_VERSION VERSION_GREATER 3.0 AND VOLK_CPU_FEATURES)
+    find_package(CPUFEATURES)
+    if(CPUFEATURES_FOUND AND (CMAKE_SYSTEM_PROCESSOR MATCHES "(^s390x)|^riscv|^loongarch") AND (CPUFEATURES_VERSION VERSION_LESS "0.8.0"))
+        set(USE_CPU_FEATURES OFF)
+        unset(CPUFEATURES_FOUND CACHE)
+        message(STATUS "Building volk-gnsssdr without cpu_features, installed version v${CPUFEATURES_VERSION} does not support the ${CMAKE_SYSTEM_PROCESSOR} architecture")
     else()
-        add_subdirectory(cpu_features)
+        set(USE_CPU_FEATURES ON)
     endif()
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
+    if(NOT CPUFEATURES_FOUND)
+        if(CMAKE_VERSION VERSION_LESS 3.13)
+            message(STATUS "Building volk-gnsssdr without cpu_features")
+        else()
+            message(STATUS "Building volk-gnsssdr with cpu_features")
+            set(BUILD_TESTING OFF CACHE BOOL "Build cpu_features without tests." FORCE)
+            set(BUILD_PIC ON CACHE BOOL
+                "Build cpu_features with Position Independent Code (PIC)."
+                FORCE
+            )
+            set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL
+                "Build cpu_features with Position Independent Code (PIC)."
+                FORCE
+            )
+            set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
+            set(BUILD_SHARED_LIBS OFF)
+            if(ENABLE_INSTALL)
+                set(ENABLE_INSTALL_AUX ${ENABLE_INSTALL})
+            endif()
+            set(ENABLE_INSTALL ON)
+            add_subdirectory(cpu_features)
+            unset(ENABLE_INSTALL)
+            if(ENABLE_INSTALL_AUX)
+                set(ENABLE_INSTALL ${ENABLE_INSTALL_AUX})
+                unset(ENABLE_INSTALL_AUX)
+            endif()
+            set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
+        endif()
+    endif()
+else()
+    message(STATUS "Building volk-gnsssdr without cpu_features")
 endif()
+
 
 # Python
 include(VolkPython) # sets PYTHON_EXECUTABLE
-volk_python_check_module("python >= 2.7" sys "sys.version.split()[0] >= '2.7'" PYTHON_MIN_VER_FOUND)
-volk_python_check_module("mako >= 0.4.2" mako "mako.__version__ >= '0.4.2'" MAKO_FOUND)
-if(Python2_VERSION OR (PYTHON_VERSION_STRING VERSION_LESS "3.0"))
-    volk_python_check_module("six - python 2 and 3 compatibility library" six "True" SIX_FOUND)
-endif()
 
-if(NOT PYTHON_MIN_VER_FOUND)
+if(NOT PYTHON_EXECUTABLE)
     message(FATAL_ERROR "Python 2.7 or greater required to build VOLK_GNSSSDR")
 endif()
 
@@ -306,7 +326,7 @@ if(NOT MAKO_FOUND)
 endif()
 
 # Six
-if(Python2_VERSION OR (PYTHON_VERSION_STRING VERSION_LESS "3.0"))
+if(PYTHON_VERSION_STRING VERSION_LESS "3.0")
     if(NOT SIX_FOUND)
         message(FATAL_ERROR "six - python 2 and 3 compatibility library required to build VOLK_GNSSSDR")
     endif()
@@ -320,7 +340,11 @@ if(MSVC)
     endif()
     set(BOOST_ALL_DYN_LINK "${BOOST_ALL_DYN_LINK}" CACHE BOOL "boost enable dynamic linking")
     if(BOOST_ALL_DYN_LINK)
-        add_definitions(-DBOOST_ALL_DYN_LINK) # setup boost auto-linking in msvc
+        if(CMAKE_VERSION VERSION_GREATER 3.12.0)
+            add_compile_definitions(BOOST_ALL_DYN_LINK) # enables math constants on all supported versions of MSVC
+        else()
+            add_definitions(-DBOOST_ALL_DYN_LINK) # setup boost auto-linking in msvc
+        endif()
     else()
         unset(BOOST_REQUIRED_COMPONENTS) # empty components list for static link
     endif()
@@ -363,16 +387,7 @@ endif()
 ########################################################################
 find_package(Doxygen)
 if(DOXYGEN_FOUND)
-    configure_file(
-        ${PROJECT_SOURCE_DIR}/Doxyfile.in
-        ${PROJECT_BINARY_DIR}/Doxyfile
-        @ONLY
-    )
-    add_custom_target(doc
-        ${DOXYGEN_EXECUTABLE} ${PROJECT_BINARY_DIR}/Doxyfile
-        WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
-        COMMENT "Generating documentation with Doxygen" VERBATIM
-    )
+    add_subdirectory(docs)
 endif()
 
 
@@ -397,13 +412,13 @@ set(libdir "\${exec_prefix}/lib${LIB_SUFFIX}")
 set(includedir "\${prefix}/include")
 
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/volk_gnsssdr.pc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/volk_gnsssdr.pc
+    ${PROJECT_SOURCE_DIR}/tmpl/volk_gnsssdr.pc.in
+    ${PROJECT_BINARY_DIR}/volk_gnsssdr.pc
     @ONLY
 )
 
 install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/volk_gnsssdr.pc
+    FILES ${PROJECT_BINARY_DIR}/volk_gnsssdr.pc
     DESTINATION lib${LIB_SUFFIX}/pkgconfig
     COMPONENT "volk_gnsssdr_devel"
 )
@@ -472,14 +487,14 @@ endif()
 ########################################################################
 configure_file(
     ${PROJECT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+    ${PROJECT_BINARY_DIR}/cmake_uninstall.cmake
     @ONLY
 )
 
 # Only add the target if there isn't one defined already
 if(NOT TARGET uninstall)
     add_custom_target(uninstall
-        ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+        ${CMAKE_COMMAND} -P ${PROJECT_BINARY_DIR}/cmake_uninstall.cmake
     )
 endif()
 
@@ -492,8 +507,8 @@ endif()
 ########################################################################
 
 configure_file(
-    ${CMAKE_SOURCE_DIR}/cmake/Modules/VolkGnsssdrConfig.cmake.in
-    ${CMAKE_BINARY_DIR}/cmake/Modules/VolkGnsssdrConfig.cmake
+    ${PROJECT_SOURCE_DIR}/cmake/Modules/VolkGnsssdrConfig.cmake.in
+    ${PROJECT_BINARY_DIR}/cmake/Modules/VolkGnsssdrConfig.cmake
     @ONLY
 )
 
@@ -514,8 +529,8 @@ endif()
 
 install(
     FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/Modules/VolkGnsssdrConfig.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/Modules/VolkGnsssdrConfigVersion.cmake
+    ${PROJECT_BINARY_DIR}/cmake/Modules/VolkGnsssdrConfig.cmake
+    ${PROJECT_BINARY_DIR}/cmake/Modules/VolkGnsssdrConfigVersion.cmake
     DESTINATION ${CMAKE_MODULES_DIR}/volk_gnsssdr
     COMPONENT "volk_gnsssdr_devel"
 )

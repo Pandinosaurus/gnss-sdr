@@ -29,7 +29,7 @@
 #include <span>
 namespace own = std;
 #else
-#include <gsl/gsl>
+#include <gsl/gsl-lite.hpp>
 namespace own = gsl;
 #endif
 
@@ -37,15 +37,19 @@ GalileoE1PcpsAmbiguousAcquisition::GalileoE1PcpsAmbiguousAcquisition(
     const ConfigurationInterface* configuration,
     const std::string& role,
     unsigned int in_streams,
-    unsigned int out_streams) : role_(role),
-                                in_streams_(in_streams),
-                                out_streams_(out_streams)
+    unsigned int out_streams)
+    : gnss_synchro_(nullptr),
+      configuration_(configuration),
+      role_(role),
+      threshold_(0.0),
+      doppler_center_(0),
+      channel_(0),
+      in_streams_(in_streams),
+      out_streams_(out_streams),
+      acquire_pilot_(configuration->property(role + ".acquire_pilot", false))
 {
-    configuration_ = configuration;
     acq_parameters_.ms_per_code = 4;
-    acq_parameters_.SetFromConfiguration(configuration_, role, GALILEO_E1_CODE_CHIP_RATE_CPS, GALILEO_E1_OPT_ACQ_FS_SPS);
-
-    DLOG(INFO) << "role " << role;
+    acq_parameters_.SetFromConfiguration(configuration_, role_, GALILEO_E1_CODE_CHIP_RATE_CPS, GALILEO_E1_OPT_ACQ_FS_SPS);
 
     if (FLAGS_doppler_max != 0)
         {
@@ -56,14 +60,14 @@ GalileoE1PcpsAmbiguousAcquisition::GalileoE1PcpsAmbiguousAcquisition(
     item_type_ = acq_parameters_.item_type;
     item_size_ = acq_parameters_.it_size;
     fs_in_ = acq_parameters_.fs_in;
-    acquire_pilot_ = configuration->property(role + ".acquire_pilot", false);
 
     code_length_ = static_cast<unsigned int>(std::floor(static_cast<double>(acq_parameters_.resampled_fs) / (GALILEO_E1_CODE_CHIP_RATE_CPS / GALILEO_E1_B_CODE_LENGTH_CHIPS)));
     vector_length_ = static_cast<unsigned int>(std::floor(acq_parameters_.sampled_ms * acq_parameters_.samples_per_ms) * (acq_parameters_.bit_transition_flag ? 2.0 : 1.0));
-    code_ = std::vector<std::complex<float>>(vector_length_);
+    code_ = volk_gnsssdr::vector<std::complex<float>>(vector_length_);
 
     sampled_ms_ = acq_parameters_.sampled_ms;
 
+    DLOG(INFO) << "role " << role_;
     acquisition_ = pcps_make_acquisition(acq_parameters_);
     DLOG(INFO) << "acquisition(" << acquisition_->unique_id() << ")";
 
@@ -72,11 +76,6 @@ GalileoE1PcpsAmbiguousAcquisition::GalileoE1PcpsAmbiguousAcquisition(
             cbyte_to_float_x2_ = make_complex_byte_to_float_x2();
             float_to_complex_ = gr::blocks::float_to_complex::make();
         }
-
-    channel_ = 0;
-    threshold_ = 0.0;
-    doppler_center_ = 0;
-    gnss_synchro_ = nullptr;
 
     if (in_streams_ > 1)
         {
@@ -152,7 +151,7 @@ void GalileoE1PcpsAmbiguousAcquisition::set_local_code()
     bool cboc = configuration_->property(
         "Acquisition" + std::to_string(channel_) + ".cboc", false);
 
-    std::vector<std::complex<float>> code(code_length_);
+    volk_gnsssdr::vector<std::complex<float>> code(code_length_);
 
     if (acquire_pilot_ == true)
         {

@@ -21,15 +21,16 @@
 #include <sstream>
 
 
-Monitor_Ephemeris_Udp_Sink::Monitor_Ephemeris_Udp_Sink(const std::vector<std::string>& addresses, const uint16_t& port, bool protobuf_enabled) : socket{io_context}
+Monitor_Ephemeris_Udp_Sink::Monitor_Ephemeris_Udp_Sink(const std::vector<std::string>& addresses,
+    const uint16_t& port,
+    bool protobuf_enabled) : socket{io_context},
+                             use_protobuf(protobuf_enabled)
 {
     for (const auto& address : addresses)
         {
             boost::asio::ip::udp::endpoint endpoint(boost::asio::ip::address::from_string(address, error), port);
             endpoints.push_back(endpoint);
         }
-
-    use_protobuf = protobuf_enabled;
     if (use_protobuf)
         {
             serdes_gal = Serdes_Galileo_Eph();
@@ -57,11 +58,10 @@ bool Monitor_Ephemeris_Udp_Sink::write_galileo_ephemeris(const std::shared_ptr<G
     for (const auto& endpoint : endpoints)
         {
             socket.open(endpoint.protocol(), error);
-            socket.connect(endpoint, error);
 
             try
                 {
-                    if (socket.send(boost::asio::buffer(outbound_data)) == 0)
+                    if (socket.send_to(boost::asio::buffer(outbound_data), endpoint) == 0)
                         {
                             return false;
                         }
@@ -94,11 +94,10 @@ bool Monitor_Ephemeris_Udp_Sink::write_gps_ephemeris(const std::shared_ptr<Gps_E
     for (const auto& endpoint : endpoints)
         {
             socket.open(endpoint.protocol(), error);
-            socket.connect(endpoint, error);
 
             try
                 {
-                    if (socket.send(boost::asio::buffer(outbound_data)) == 0)
+                    if (socket.send_to(boost::asio::buffer(outbound_data), endpoint) == 0)
                         {
                             return false;
                         }

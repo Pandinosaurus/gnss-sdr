@@ -21,9 +21,12 @@
 #include <iostream>
 #include <sstream>
 
-Gnss_Synchro_Udp_Sink::Gnss_Synchro_Udp_Sink(const std::vector<std::string>& addresses, const uint16_t& port, bool enable_protobuf) : socket{io_context}
+Gnss_Synchro_Udp_Sink::Gnss_Synchro_Udp_Sink(const std::vector<std::string>& addresses,
+    const uint16_t& port,
+    bool enable_protobuf)
+    : socket{io_context},
+      use_protobuf(enable_protobuf)
 {
-    use_protobuf = enable_protobuf;
     if (enable_protobuf)
         {
             serdes = Serdes_Gnss_Synchro();
@@ -53,11 +56,10 @@ bool Gnss_Synchro_Udp_Sink::write_gnss_synchro(const std::vector<Gnss_Synchro>& 
     for (const auto& endpoint : endpoints)
         {
             socket.open(endpoint.protocol(), error);
-            socket.connect(endpoint, error);
 
             try
                 {
-                    if (socket.send(boost::asio::buffer(outbound_data)) == 0)
+                    if (socket.send_to(boost::asio::buffer(outbound_data), endpoint) == 0)
                         {
                             std::cerr << "Gnss_Synchro_Udp_Sink sent 0 bytes\n";
                         }

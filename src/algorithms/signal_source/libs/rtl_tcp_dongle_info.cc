@@ -21,7 +21,6 @@
 #include <string>
 #include <vector>
 
-using boost::asio::ip::tcp;
 
 Rtl_Tcp_Dongle_Info::Rtl_Tcp_Dongle_Info() : tuner_type_(0), tuner_gain_count_(0)
 {
@@ -33,11 +32,11 @@ boost::system::error_code Rtl_Tcp_Dongle_Info::read(boost::asio::ip::tcp::socket
 {
     boost::system::error_code ec;
 
-    unsigned char data[sizeof(char) * 4 + sizeof(uint32_t) * 2];
+    std::vector<unsigned char> data(sizeof(char) * 4 + sizeof(uint32_t) * 2);
     size_t received_bits = socket.receive(boost::asio::buffer(data), 0, ec);
     if (!ec && (received_bits > 0))
         {
-            std::memcpy(magic_, data, 4);
+            std::memcpy(magic_, data.data(), 4);
 
             uint32_t type;
             std::memcpy(&type, &data[4], 4);

@@ -20,11 +20,14 @@ if(DEFINED ENV{BLAS_ROOT})
 endif()
 
 find_library(BLAS_LIBRARIES
-    libblas.dylib
+    NAMES libblas.dylib libopenblas.dylib
     PATHS
+        ${BLAS_ROOT_USER_DEFINED}
+        ${BLAS_ROOT_USER_DEFINED}/lapack
         /opt/local/lib/lapack
+        /opt/local/lib/
         /usr/local/opt/lapack/lib
-        /usr/local/lib
+        /opt/homebrew/opt/lapack/lib
     NO_DEFAULT_PATH
     NO_SYSTEM_ENVIRONMENT_PATH
     NO_CMAKE_ENVIRONMENT_PATH
@@ -34,6 +37,7 @@ find_library(BLAS_LIBRARIES
 
 if(BLAS_LIBRARIES)
     set(BLAS_FOUND TRUE)
+    message(STATUS "BLAS library found at ${BLAS_LIBRARIES}")
 endif()
 
 
@@ -41,9 +45,10 @@ find_library(LAPACK_LIBRARIES
     liblapack.dylib
     PATHS
         ${BLAS_ROOT_USER_DEFINED}
+        ${BLAS_ROOT_USER_DEFINED}/lapack
         /opt/local/lib/lapack
         /usr/local/opt/lapack/lib
-        /usr/local/lib
+        /opt/homebrew/opt/lapack/lib
     NO_DEFAULT_PATH
     NO_SYSTEM_ENVIRONMENT_PATH
     NO_CMAKE_ENVIRONMENT_PATH
@@ -53,4 +58,5 @@ find_library(LAPACK_LIBRARIES
 
 if(LAPACK_LIBRARIES)
     set(LAPACK_FOUND TRUE)
+    message(STATUS "LAPACK library found at ${LAPACK_LIBRARIES}")
 endif()

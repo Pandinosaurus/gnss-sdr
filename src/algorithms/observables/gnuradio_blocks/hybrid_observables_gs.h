@@ -21,6 +21,7 @@
 #define GNSS_SDR_HYBRID_OBSERVABLES_GS_H
 
 #include "gnss_block_interface.h"
+#include "gnss_time.h"  // for timetags produced by Tracking
 #include "obs_conf.h"
 #include <boost/circular_buffer.hpp>  // for boost::circular_buffer
 #include <gnuradio/block.h>           // for block
@@ -28,8 +29,8 @@
 #include <cstddef>                    // for size_t
 #include <cstdint>                    // for int32_t
 #include <fstream>                    // for std::ofstream
-#include <map>                        // for std::map
 #include <memory>                     // for std::shared, std:unique_ptr
+#include <queue>                      // for std::queue
 #include <string>                     // for std::string
 #include <typeinfo>                   // for typeid
 #include <vector>                     // for std::vector
@@ -68,6 +69,7 @@ private:
     explicit hybrid_observables_gs(const Obs_Conf& conf_);
 
     const size_t d_double_type_hash_code = typeid(double).hash_code();
+    const size_t d_int_type_hash_code = typeid(int).hash_code();
 
     void msg_handler_pvt_to_observables(const pmt::pmt_t& msg);
     double compute_T_rx_s(const Gnss_Synchro& a) const;
@@ -75,31 +77,18 @@ private:
     void update_TOW(const std::vector<Gnss_Synchro>& data);
     void compute_pranges(std::vector<Gnss_Synchro>& data) const;
     void smooth_pseudoranges(std::vector<Gnss_Synchro>& data);
+
+    void set_tag_timestamp_in_sdr_timeframe(const std::vector<Gnss_Synchro>& data, uint64_t rx_clock);
     int32_t save_matfile() const;
 
     Obs_Conf d_conf;
 
-    enum StringValue_
-    {
-        evGPS_1C,
-        evGPS_2S,
-        evGPS_L5,
-        evSBAS_1C,
-        evGAL_1B,
-        evGAL_5X,
-        evGAL_E6,
-        evGAL_7X,
-        evGLO_1G,
-        evGLO_2G,
-        evBDS_B1,
-        evBDS_B2,
-        evBDS_B3
-    };
-    std::map<std::string, StringValue_> d_mapStringValues;
-
     std::unique_ptr<Gnss_circular_deque<Gnss_Synchro>> d_gnss_synchro_history;  // Tracking observable history
 
     boost::circular_buffer<uint64_t> d_Rx_clock_buffer;  // time history
+
+    std::vector<std::queue<GnssTime>> d_SourceTagTimestamps;
+    std::queue<GnssTime> d_TimeChannelTagTimestamps;
 
     std::vector<bool> d_channel_last_pll_lock;
     std::vector<double> d_channel_last_pseudorange_smooth;
@@ -111,6 +100,7 @@ private:
 
     double d_smooth_filter_M;
     double d_T_rx_step_s;
+    double d_last_rx_clock_round20ms_error;
 
     uint32_t d_T_rx_TOW_ms;
     uint32_t d_T_rx_step_ms;
@@ -119,6 +109,7 @@ private:
     uint32_t d_nchannels_out;
 
     bool d_T_rx_TOW_set;  // rx time follow GPST
+    bool d_always_output_gs;
     bool d_dump;
     bool d_dump_mat;
 };

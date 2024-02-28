@@ -23,9 +23,10 @@
 #include "channel_fsm.h"
 #include "gnss_synchro.h"
 #include "pcps_acquisition.h"
+#include <volk_gnsssdr/volk_gnsssdr_alloc.h>
 #include <memory>
 #include <string>
-#include <vector>
+#include <utility>
 
 /** \addtogroup Acquisition
  * \{ */
@@ -117,8 +118,8 @@ public:
      */
     inline void set_channel_fsm(std::weak_ptr<ChannelFsm> channel_fsm) override
     {
-        channel_fsm_ = channel_fsm;
-        acquisition_->set_channel_fsm(channel_fsm);
+        channel_fsm_ = std::move(channel_fsm);
+        acquisition_->set_channel_fsm(channel_fsm_);
     }
 
     /*!
@@ -181,7 +182,7 @@ public:
 private:
     pcps_acquisition_sptr acquisition_;
 
-    std::vector<std::complex<float>> code_;
+    volk_gnsssdr::vector<std::complex<float>> code_;
     std::weak_ptr<ChannelFsm> channel_fsm_;
 
     Gnss_Synchro* gnss_synchro_;

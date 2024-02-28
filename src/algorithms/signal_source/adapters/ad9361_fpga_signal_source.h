@@ -1,8 +1,11 @@
 /*!
  * \file ad9361_fpga_signal_source.h
- * \brief signal source for Analog Devices front-end AD9361 connected directly to FPGA accelerators.
- * This source implements only the AD9361 control. It is NOT compatible with conventional SDR acquisition and tracking blocks.
- * Please use the fmcomms2 source if conventional SDR acquisition and tracking is selected in the configuration file.
+ * \brief signal source for Analog Devices front-end AD9361 connected directly
+ * to FPGA accelerators.
+ * This source implements only the AD9361 control. It is NOT compatible with
+ * conventional SDR acquisition and tracking blocks.
+ * Please use the fmcomms2 source if conventional SDR acquisition and tracking
+ * is selected in the configuration file.
  *
  * -----------------------------------------------------------------------------
  *
@@ -20,6 +23,7 @@
 
 #include "concurrent_queue.h"
 #include "fpga_buffer_monitor.h"
+#include "fpga_dma-proxy.h"
 #include "fpga_dynamic_bit_selection.h"
 #include "fpga_switch.h"
 #include "gnss_block_interface.h"
@@ -62,10 +66,18 @@ public:
     gr::basic_block_sptr get_right_block() override;
 
 private:
-    const std::string switch_device_name = "AXIS_Switch_v1_0_0";          // Switch UIO device name
-    const std::string dyn_bit_sel_device_name = "dynamic_bits_selector";  // Switch dhnamic bit selector device name
-    const std::string buffer_monitor_device_name = "buffer_monitor";      // buffer monitor device name
+    const std::string switch_device_name = std::string("AXIS_Switch_v1_0_0");          // Switch UIO device name
+    const std::string dyn_bit_sel_device_name = std::string("dynamic_bits_selector");  // Switch dhnamic bit selector device name
+    const std::string buffer_monitor_device_name = std::string("buffer_monitor");      // buffer monitor device name
     const std::string default_dump_filename = std::string("FPGA_buffer_monitor_dump.dat");
+    const std::string default_rf_port_select = std::string("A_BALANCED");
+    const std::string default_gain_mode = std::string("slow_attack");
+    const std::string empty_string;
+    const double default_tx_attenuation_db = -10.0;
+    const double default_manual_gain_rx1 = 64.0;
+    const double default_manual_gain_rx2 = 64.0;
+    const uint64_t default_bandwidth = 12500000;
+
     // perform dynamic bit selection every 500 ms by default
     const uint32_t Gain_control_period_ms = 500;
     // check buffer overflow and perform buffer monitoring every 1s by default
@@ -94,42 +106,50 @@ private:
     std::shared_ptr<Fpga_Switch> switch_fpga;
     std::shared_ptr<Fpga_dynamic_bit_selection> dynamic_bit_selection_fpga;
     std::shared_ptr<Fpga_buffer_monitor> buffer_monitor_fpga;
+    std::shared_ptr<Fpga_DMA> dma_fpga;
 
-    // Front-end settings
+    std::mutex dma_mutex;
+    std::mutex dynamic_bit_selection_mutex;
+    std::mutex buffer_monitor_mutex;
+
+    Concurrent_Queue<pmt::pmt_t> *queue_;
+
     std::string gain_mode_rx1_;
     std::string gain_mode_rx2_;
     std::string rf_port_select_;
     std::string filter_file_;
     std::string filter_source_;
     std::string filter_filename_;
-    std::string filename0;
-    std::string filename1;
-
-    std::mutex dma_mutex;
-    std::mutex dynamic_bit_selection_mutex;
-    std::mutex buffer_monitor_mutex;
+    std::string filename0_;
+    std::string filename1_;
 
     double rf_gain_rx1_;
     double rf_gain_rx2_;
-    uint64_t freq_;  // frequency of local oscillator
-    uint64_t sample_rate_;
-    uint64_t bandwidth_;
-    float Fpass_;
-    float Fstop_;
-
-    // DDS configuration for LO generation for external mixer
     double scale_dds_dbfs_;
     double phase_dds_deg_;
     double tx_attenuation_db_;
-    uint64_t freq_rf_tx_hz_;
+
+    uint64_t freq0_;  // frequency of local oscillator for ADRV9361-A 0
+    uint64_t freq1_;  // frequency of local oscillator for ADRV9361-B (if present)
+    uint64_t sample_rate_;
+    uint64_t bandwidth_;
+    uint64_t samples_to_skip_;
+    int64_t samples_;
     uint64_t freq_dds_tx_hz_;
+    uint64_t freq_rf_tx_hz_;
     uint64_t tx_bandwidth_;
-    size_t item_size_;
+
+    float Fpass_;
+    float Fstop_;
+    uint32_t num_input_files_;
+    uint32_t dma_buff_offset_pos_;
     uint32_t in_stream_;
     uint32_t out_stream_;
     int32_t switch_position_;
-    bool enable_dds_lo_;
 
+    size_t item_size_;
+
+    bool enable_dds_lo_;
     bool filter_auto_;
     bool quadrature_;
     bool rf_dc_;
@@ -141,15 +161,7 @@ private:
     bool enable_ovf_check_buffer_monitor_active_;
     bool dump_;
     bool rf_shutdown_;
-
-    // post-processing mode
-    int64_t samples_;
-    uint64_t samples_to_skip_;
     bool repeat_;
-    uint32_t num_freq_bands_;
-    uint32_t dma_buff_offset_pos_;
-
-    Concurrent_Queue<pmt::pmt_t> *queue_;
 };
 
 

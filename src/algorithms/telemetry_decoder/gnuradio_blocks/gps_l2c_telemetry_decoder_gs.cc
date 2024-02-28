@@ -18,6 +18,7 @@
 #include "gps_l2c_telemetry_decoder_gs.h"
 #include "GPS_L2C.h"  // for GPS_L2_CNAV_DATA_PAGE_BITS, GPS_L...
 #include "display.h"
+#include "gnss_sdr_make_unique.h"  // for std::make_unique in C++11
 #include "gnss_synchro.h"
 #include "gps_cnav_ephemeris.h"  // for Gps_CNAV_Ephemeris
 #include "gps_cnav_iono.h"       // for Gps_CNAV_Iono
@@ -31,8 +32,10 @@
 #include <cmath>            // for round
 #include <cstddef>          // for size_t
 #include <exception>        // for exception
+#include <iomanip>          // for setprecision
 #include <iostream>         // for cout
 #include <memory>           // for shared_ptr, make_shared
+#include <utility>          // for std::move
 
 
 gps_l2c_telemetry_decoder_gs_sptr
@@ -46,7 +49,21 @@ gps_l2c_telemetry_decoder_gs::gps_l2c_telemetry_decoder_gs(
     const Gnss_Satellite &satellite,
     const Tlm_Conf &conf) : gr::block("gps_l2c_telemetry_decoder_gs",
                                 gr::io_signature::make(1, 1, sizeof(Gnss_Synchro)),
-                                gr::io_signature::make(1, 1, sizeof(Gnss_Synchro)))
+                                gr::io_signature::make(1, 1, sizeof(Gnss_Synchro))),
+                            d_dump_filename(conf.dump_filename),
+                            d_TOW_at_current_symbol(0),
+                            d_TOW_at_Preamble(0),
+                            d_sample_counter(0),
+                            d_last_valid_preamble(0),
+                            d_channel(0),
+                            d_dump(conf.dump),
+                            d_sent_tlm_failed_msg(false),
+                            d_flag_PLL_180_deg_phase_locked(false),
+                            d_flag_valid_word(false),
+                            d_dump_mat(conf.dump_mat),
+                            d_remove_dat(conf.remove_dat),
+                            d_enable_navdata_monitor(conf.enable_navdata_monitor),
+                            d_dump_crc_stats(conf.dump_crc_stats)
 {
     // prevent telemetry symbols accumulation in output buffers
     this->set_max_noutput_items(1);
@@ -54,30 +71,33 @@ gps_l2c_telemetry_decoder_gs::gps_l2c_telemetry_decoder_gs(
     this->message_port_register_out(pmt::mp("telemetry"));
     // Control messages to tracking block
     this->message_port_register_out(pmt::mp("telemetry_to_trk"));
-    d_last_valid_preamble = 0;
-    d_sent_tlm_failed_msg = false;
+
+    if (d_enable_navdata_monitor)
+        {
+            // register nav message monitor out
+            this->message_port_register_out(pmt::mp("Nav_msg_from_TLM"));
+            d_nav_msg_packet.system = std::string("G");
+            d_nav_msg_packet.signal = std::string("2S");
+        }
+
     d_max_symbols_without_valid_frame = GPS_L2_CNAV_DATA_PAGE_BITS * GPS_L2_SYMBOLS_PER_BIT * 5;  // rise alarm if 5 consecutive subframes have no valid CRC
 
-    // initialize internal vars
-    d_dump_filename = conf.dump_filename;
-    d_dump = conf.dump;
-    d_dump_mat = conf.dump_mat;
-    d_remove_dat = conf.remove_dat;
     d_satellite = Gnss_Satellite(satellite.get_system(), satellite.get_PRN());
     DLOG(INFO) << "GPS L2C M TELEMETRY PROCESSING: satellite " << d_satellite;
-    // set_output_multiple (1);
-    d_channel = 0;
-    d_flag_valid_word = false;
-    d_TOW_at_current_symbol = 0;
-    d_TOW_at_Preamble = 0;
-    d_state = 0;  // initial state
-    d_crc_error_count = 0;
 
     // initialize the CNAV frame decoder (libswiftcnav)
     cnav_msg_decoder_init(&d_cnav_decoder);
 
-    d_sample_counter = 0;
-    d_flag_PLL_180_deg_phase_locked = false;
+    if (d_dump_crc_stats)
+        {
+            // initialize the telemetry CRC statistics class
+            d_Tlm_CRC_Stats = std::make_unique<Tlm_CRC_Stats>();
+            d_Tlm_CRC_Stats->initialize(conf.dump_crc_stats_filename);
+        }
+    else
+        {
+            d_Tlm_CRC_Stats = nullptr;
+        }
 }
 
 
@@ -138,16 +158,22 @@ void gps_l2c_telemetry_decoder_gs::set_channel(int channel)
                         {
                             d_dump_filename.append(std::to_string(d_channel));
                             d_dump_filename.append(".dat");
-                            d_dump_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+                            d_dump_file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
                             d_dump_file.open(d_dump_filename.c_str(), std::ios::out | std::ios::binary);
                             LOG(INFO) << "Telemetry decoder dump enabled on channel " << d_channel
                                       << " Log file: " << d_dump_filename.c_str();
                         }
-                    catch (const std::ifstream::failure &e)
+                    catch (const std::ofstream::failure &e)
                         {
                             LOG(WARNING) << "channel " << d_channel << " Exception opening Telemetry GPS L2 dump file " << e.what();
                         }
                 }
+        }
+    if (d_dump_crc_stats)
+        {
+            // set the channel number for the telemetry CRC statistics
+            // disable the telemetry CRC statistics if there is a problem opening the output file
+            d_dump_crc_stats = d_Tlm_CRC_Stats->set_channel(d_channel);
         }
 }
 
@@ -174,6 +200,13 @@ int gps_l2c_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
     // add the symbol to the decoder
     const uint8_t symbol_clip = static_cast<uint8_t>(in[0].Prompt_I > 0) * 255;
     flag_new_cnav_frame = cnav_msg_decoder_add_symbol(&d_cnav_decoder, symbol_clip, &msg, &delay);
+    if (d_dump_crc_stats && (d_cnav_decoder.part1.message_lock || d_cnav_decoder.part2.message_lock))
+        {
+            // update CRC statistics
+            d_Tlm_CRC_Stats->update_CRC_stats((d_cnav_decoder.part1.crc_ok || d_cnav_decoder.part2.crc_ok));
+            d_cnav_decoder.part1.message_lock = false;
+            d_cnav_decoder.part2.message_lock = false;
+        }
 
     consume_each(1);  // one by one
 
@@ -199,7 +232,7 @@ int gps_l2c_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
     // check if new CNAV frame is available
     if (flag_new_cnav_frame == true)
         {
-            if (d_cnav_decoder.part1.invert == true or d_cnav_decoder.part2.invert == true)
+            if (d_cnav_decoder.part1.invert == true || d_cnav_decoder.part2.invert == true)
                 {
                     d_flag_PLL_180_deg_phase_locked = true;
                 }
@@ -214,6 +247,11 @@ int gps_l2c_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
                     raw_bits[GPS_L2_CNAV_DATA_PAGE_BITS - 1 - i] = ((msg.raw_msg[i / 8] >> (7 - i % 8)) & 1U);
                 }
 
+            if (d_enable_navdata_monitor)
+                {
+                    d_nav_msg_packet.nav_message = raw_bits.to_string();
+                }
+
             d_CNAV_Message.decode_page(raw_bits);
 
             // Push the new navigation data to the queues
@@ -221,21 +259,45 @@ int gps_l2c_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
                 {
                     // get ephemeris object for this SV
                     const std::shared_ptr<Gps_CNAV_Ephemeris> tmp_obj = std::make_shared<Gps_CNAV_Ephemeris>(d_CNAV_Message.get_ephemeris());
-                    std::cout << TEXT_BLUE << "New GPS CNAV message received in channel " << d_channel << ": ephemeris from satellite " << d_satellite << TEXT_RESET << '\n';
                     this->message_port_pub(pmt::mp("telemetry"), pmt::make_any(tmp_obj));
+#if __cplusplus == 201103L
+                    const int default_precision = std::cout.precision();
+#else
+                    const auto default_precision{std::cout.precision()};
+#endif
+                    std::cout << TEXT_BLUE << "New GPS CNAV message received in channel " << d_channel
+                              << ": ephemeris from satellite " << d_satellite
+                              << " with CN0=" << std::setprecision(2) << current_synchro_data.CN0_dB_hz << std::setprecision(default_precision)
+                              << " dB-Hz" << TEXT_RESET << std::endl;
                 }
             if (d_CNAV_Message.have_new_iono() == true)
                 {
                     const std::shared_ptr<Gps_CNAV_Iono> tmp_obj = std::make_shared<Gps_CNAV_Iono>(d_CNAV_Message.get_iono());
-                    std::cout << TEXT_BLUE << "New GPS CNAV message received in channel " << d_channel << ": iono model parameters from satellite " << d_satellite << TEXT_RESET << '\n';
                     this->message_port_pub(pmt::mp("telemetry"), pmt::make_any(tmp_obj));
+#if __cplusplus == 201103L
+                    const int default_precision = std::cout.precision();
+#else
+                    const auto default_precision{std::cout.precision()};
+#endif
+                    std::cout << TEXT_BLUE << "New GPS CNAV message received in channel " << d_channel
+                              << ": iono model parameters from satellite " << d_satellite
+                              << " with CN0=" << std::setprecision(2) << current_synchro_data.CN0_dB_hz << std::setprecision(default_precision)
+                              << " dB-Hz" << TEXT_RESET << std::endl;
                 }
 
             if (d_CNAV_Message.have_new_utc_model() == true)
                 {
                     const std::shared_ptr<Gps_CNAV_Utc_Model> tmp_obj = std::make_shared<Gps_CNAV_Utc_Model>(d_CNAV_Message.get_utc_model());
-                    std::cout << TEXT_BLUE << "New GPS CNAV message received in channel " << d_channel << ": UTC model parameters from satellite " << d_satellite << TEXT_RESET << '\n';
                     this->message_port_pub(pmt::mp("telemetry"), pmt::make_any(tmp_obj));
+#if __cplusplus == 201103L
+                    const int default_precision = std::cout.precision();
+#else
+                    const auto default_precision{std::cout.precision()};
+#endif
+                    std::cout << TEXT_BLUE << "New GPS CNAV message received in channel " << d_channel
+                              << ": UTC model parameters from satellite " << d_satellite
+                              << " with CN0=" << std::setprecision(2) << current_synchro_data.CN0_dB_hz << std::setprecision(default_precision)
+                              << " dB-Hz" << TEXT_RESET << std::endl;
                 }
 
             // update TOW at the preamble instant
@@ -248,6 +310,15 @@ int gps_l2c_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
             d_TOW_at_current_symbol = static_cast<double>(msg.tow) * 6.0 + static_cast<double>(delay) * GPS_L2_M_PERIOD_S + 12 * GPS_L2_M_PERIOD_S;
             // d_TOW_at_current_symbol = floor(d_TOW_at_current_symbol * 1000.0) / 1000.0;
             d_flag_valid_word = true;
+
+            if (d_enable_navdata_monitor && !d_nav_msg_packet.nav_message.empty())
+                {
+                    d_nav_msg_packet.prn = static_cast<int32_t>(current_synchro_data.PRN);
+                    d_nav_msg_packet.tow_at_current_symbol_ms = static_cast<int32_t>(d_TOW_at_current_symbol * 1000.0);
+                    const std::shared_ptr<Nav_Message_Packet> tmp_obj = std::make_shared<Nav_Message_Packet>(d_nav_msg_packet);
+                    this->message_port_pub(pmt::mp("Nav_msg_from_TLM"), pmt::make_any(tmp_obj));
+                    d_nav_msg_packet.nav_message = "";
+                }
         }
     else
         {
@@ -262,6 +333,11 @@ int gps_l2c_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
         {
             // correct the accumulated phase for the Costas loop phase shift, if required
             current_synchro_data.Carrier_phase_rads += GNSS_PI;
+            current_synchro_data.Flag_PLL_180_deg_phase_locked = true;
+        }
+    else
+        {
+            current_synchro_data.Flag_PLL_180_deg_phase_locked = false;
         }
 
     current_synchro_data.TOW_at_current_symbol_ms = round(d_TOW_at_current_symbol * 1000.0);
@@ -286,13 +362,13 @@ int gps_l2c_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
                     tmp_int = static_cast<int32_t>(current_synchro_data.PRN);
                     d_dump_file.write(reinterpret_cast<char *>(&tmp_int), sizeof(int32_t));
                 }
-            catch (const std::ifstream::failure &e)
+            catch (const std::ofstream::failure &e)
                 {
                     LOG(WARNING) << "Exception writing Telemetry GPS L2 dump file " << e.what();
                 }
         }
 
     // 3. Make the output (copy the object contents to the GNURadio reserved memory)
-    out[0] = current_synchro_data;
+    out[0] = std::move(current_synchro_data);
     return 1;
 }

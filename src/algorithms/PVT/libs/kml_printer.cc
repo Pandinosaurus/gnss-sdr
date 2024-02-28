@@ -24,17 +24,17 @@
 #include <cstdlib>    // for mkstemp
 #include <ctime>      // for tm
 #include <exception>  // for exception
+#include <iomanip>    // for std::setprecision
 #include <iostream>   // for cout, cerr
 #include <sstream>
 #include <sys/stat.h>   // for S_IXUSR | S_IRWXG | S_IRWXO
 #include <sys/types.h>  // for mode_t
 
 
-Kml_Printer::Kml_Printer(const std::string& base_path)
+Kml_Printer::Kml_Printer(const std::string& base_path) : kml_base_path(base_path),
+                                                         indent("  "),
+                                                         positions_printed(false)
 {
-    positions_printed = false;
-    indent = "  ";
-    kml_base_path = base_path;
     fs::path full_path(fs::current_path());
     const fs::path p(kml_base_path);
     if (!fs::exists(p))
@@ -210,12 +210,8 @@ bool Kml_Printer::set_headers(const std::string& filename, bool time_tag_name)
 }
 
 
-bool Kml_Printer::print_position(const Pvt_Solution* const position, bool print_average_values)
+bool Kml_Printer::print_position(const Pvt_Solution* const position)
 {
-    double latitude;
-    double longitude;
-    double height;
-
     positions_printed = true;
 
     const double speed_over_ground = position->get_speed_over_ground();    // expressed in m/s
@@ -232,18 +228,9 @@ bool Kml_Printer::print_position(const Pvt_Solution* const position, bool print_
     utc_time.resize(23, '0');  // time up to ms
     utc_time.append("Z");      // UTC time zone
 
-    if (print_average_values == false)
-        {
-            latitude = position->get_latitude();
-            longitude = position->get_longitude();
-            height = position->get_height();
-        }
-    else
-        {
-            latitude = position->get_avg_latitude();
-            longitude = position->get_avg_longitude();
-            height = position->get_avg_height();
-        }
+    const double latitude = position->get_latitude();
+    const double longitude = position->get_longitude();
+    const double height = position->get_height();
 
     if (kml_file.is_open() && tmp_file.is_open())
         {

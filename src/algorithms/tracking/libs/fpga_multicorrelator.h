@@ -186,7 +186,7 @@ private:
     static const uint32_t drop_samples = 1;                     // bit 0 of drop_samples_reg_addr
     static const uint32_t enable_secondary_code = 2;            // bit 1 of drop_samples_reg_addr
     static const uint32_t init_secondary_code_addresses = 4;    // bit 2 of drop_samples_reg_addr
-    static const uint32_t page_size = 0x10000;
+    static const uint32_t FPGA_PAGE_SIZE = 0x1000;
     static const uint32_t max_code_resampler_counter = 1 << 31;  // 2^(number of bits of precision of the code resampler)
     static const uint32_t local_code_fpga_clear_address_counter = 0x10000000;
     static const uint32_t test_register_track_writeval = 0x55AA;
@@ -221,7 +221,6 @@ private:
     float d_phase_step_rad;
     float d_carrier_phase_rate_step_rad;
 
-    uint32_t d_code_length_chips;
     uint32_t d_code_length_samples;
     uint32_t d_n_correlators;  // number of correlators
 
@@ -231,7 +230,6 @@ private:
 
     // configuration data received from the interface
     uint32_t d_correlator_length_samples;
-    uint32_t d_code_samples_per_chip;
 
     uint32_t d_code_phase_step_chips_num;
     uint32_t d_code_phase_rate_step_chips_num;

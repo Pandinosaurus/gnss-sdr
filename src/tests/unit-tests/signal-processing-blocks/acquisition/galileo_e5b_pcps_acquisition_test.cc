@@ -49,6 +49,12 @@
 #include <gnuradio/analog/sig_source_c.h>
 #endif
 
+#if PMT_USES_BOOST_ANY
+namespace wht = boost;
+#else
+namespace wht = std;
+#endif
+
 // ######## GNURADIO BLOCK MESSAGE RECEVER #########
 class GalileoE5bPcpsAcquisitionTest_msg_rx;
 
@@ -84,7 +90,7 @@ void GalileoE5bPcpsAcquisitionTest_msg_rx::msg_handler_channel_events(const pmt:
             rx_message = message;
             channel_internal_queue.push(rx_message);
         }
-    catch (const boost::bad_any_cast& e)
+    catch (const wht::bad_any_cast& e)
         {
             std::cout << "msg_handler_telemetry Bad any cast!" << std::endl;
             rx_message = 0;
@@ -258,7 +264,7 @@ void GalileoE5bPcpsAcquisitionTest::process_message()
 {
     if (message == 1)
         {
-            double delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - static_cast<double>(gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
+            double delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - (gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
             double doppler_error_hz = std::abs(expected_doppler_hz - gnss_synchro.Acq_doppler_hz);
             // The term -5 is here to correct the additional delay introduced by the FIR filter
             /*

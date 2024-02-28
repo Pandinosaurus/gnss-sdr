@@ -19,6 +19,7 @@
 
 #include "gnss_sdr_supl_client.h"
 #include "GPS_L1_CA.h"
+#include "MATH_CONSTANTS.h"
 #include <boost/archive/xml_iarchive.hpp>
 #include <boost/archive/xml_oarchive.hpp>
 #include <boost/serialization/map.hpp>
@@ -31,15 +32,10 @@
 #include <vector>
 
 Gnss_Sdr_Supl_Client::Gnss_Sdr_Supl_Client()
+    : server_port(0), request(0), mcc(0), mns(0), lac(0), ci(0)
 {
-    mcc = 0;
-    mns = 0;
-    lac = 0;
-    ci = 0;
     supl_ctx_new(&ctx);
     assist = supl_assist_t();
-    server_port = 0;
-    request = 0;
 }
 
 
@@ -252,17 +248,20 @@ void Gnss_Sdr_Supl_Client::read_supl_data()
                             gps_almanac_map.insert(std::pair<int, Gps_Almanac>(a->prn, gps_almanac_entry));
                             gps_almanac_iterator = this->gps_almanac_map.find(a->prn);
                         }
-                    gps_almanac_iterator->second.PRN = a->prn;
-                    gps_almanac_iterator->second.af0 = static_cast<double>(a->AF0) * pow(2.0, -20);
-                    gps_almanac_iterator->second.af1 = static_cast<double>(a->AF1) * pow(2.0, -38);
-                    gps_almanac_iterator->second.delta_i = static_cast<double>(a->Ksii) * pow(2.0, -19);
-                    gps_almanac_iterator->second.omega = static_cast<double>(a->w) * pow(2.0, -23);
-                    gps_almanac_iterator->second.OMEGA_0 = static_cast<double>(a->OMEGA_0) * pow(2.0, -23);
-                    gps_almanac_iterator->second.sqrtA = static_cast<double>(a->A_sqrt) * pow(2.0, -11);
-                    gps_almanac_iterator->second.OMEGAdot = static_cast<double>(a->OMEGA_dot) * pow(2.0, -38);
-                    gps_almanac_iterator->second.toa = static_cast<int32_t>(a->toa * pow(2.0, 12));
-                    gps_almanac_iterator->second.ecc = static_cast<double>(a->e) * pow(2.0, -21);
-                    gps_almanac_iterator->second.M_0 = static_cast<double>(a->M0) * pow(2.0, -23);
+                    if (gps_almanac_iterator != gps_almanac_map.end())
+                        {
+                            gps_almanac_iterator->second.PRN = a->prn;
+                            gps_almanac_iterator->second.af0 = static_cast<double>(a->AF0) * pow(2.0, -20);
+                            gps_almanac_iterator->second.af1 = static_cast<double>(a->AF1) * pow(2.0, -38);
+                            gps_almanac_iterator->second.delta_i = static_cast<double>(a->Ksii) * pow(2.0, -19);
+                            gps_almanac_iterator->second.omega = static_cast<double>(a->w) * pow(2.0, -23);
+                            gps_almanac_iterator->second.OMEGA_0 = static_cast<double>(a->OMEGA_0) * pow(2.0, -23);
+                            gps_almanac_iterator->second.sqrtA = static_cast<double>(a->A_sqrt) * pow(2.0, -11);
+                            gps_almanac_iterator->second.OMEGAdot = static_cast<double>(a->OMEGA_dot) * pow(2.0, -38);
+                            gps_almanac_iterator->second.toa = static_cast<int32_t>(a->toa * pow(2.0, 12));
+                            gps_almanac_iterator->second.ecc = static_cast<double>(a->e) * pow(2.0, -21);
+                            gps_almanac_iterator->second.M_0 = static_cast<double>(a->M0) * pow(2.0, -23);
+                        }
                 }
         }
 
@@ -282,48 +281,51 @@ void Gnss_Sdr_Supl_Client::read_supl_data()
                             gps_ephemeris_map.insert(std::pair<int, Gps_Ephemeris>(e->prn, gps_eph));
                             gps_eph_iterator = this->gps_ephemeris_map.find(e->prn);
                         }
-                    if (gps_time.valid)
+                    if (gps_eph_iterator != gps_ephemeris_map.end())
                         {
-                            gps_eph_iterator->second.WN = assist.time.gps_week;
-                            /* TS 44.031: GPSTOW, range 0-604799.92, resolution 0.08 sec, 23-bit presentation */
-                            gps_eph_iterator->second.tow = static_cast<double>(assist.time.gps_tow) * 0.08;
+                            if (gps_time.valid)
+                                {
+                                    gps_eph_iterator->second.WN = assist.time.gps_week;
+                                    /* TS 44.031: GPSTOW, range 0-604799.92, resolution 0.08 sec, 23-bit presentation */
+                                    gps_eph_iterator->second.tow = static_cast<double>(assist.time.gps_tow) * 0.08;
+                                }
+                            else
+                                {
+                                    gps_eph_iterator->second.WN = 0;
+                                    gps_eph_iterator->second.tow = 0;
+                                }
+                            gps_eph_iterator->second.PRN = e->prn;
+                            // SV navigation model
+                            gps_eph_iterator->second.code_on_L2 = e->bits;
+                            gps_eph_iterator->second.SV_accuracy = e->ura;  // User Range Accuracy (URA)
+                            gps_eph_iterator->second.SV_health = e->health;
+                            gps_eph_iterator->second.IODC = static_cast<double>(e->IODC);
+                            // miss P flag (1 bit)
+                            // miss SF1 Reserved (87 bits)
+                            gps_eph_iterator->second.TGD = static_cast<double>(e->tgd) * T_GD_LSB;
+                            gps_eph_iterator->second.toc = static_cast<double>(e->toc) * T_OC_LSB;
+                            gps_eph_iterator->second.af0 = static_cast<double>(e->AF0) * A_F0_LSB;
+                            gps_eph_iterator->second.af1 = static_cast<double>(e->AF1) * A_F1_LSB;
+                            gps_eph_iterator->second.af2 = static_cast<double>(e->AF2) * A_F2_LSB;
+                            gps_eph_iterator->second.Crc = static_cast<double>(e->Crc) * C_RC_LSB;
+                            gps_eph_iterator->second.delta_n = static_cast<double>(e->delta_n) * DELTA_N_LSB;
+                            gps_eph_iterator->second.M_0 = static_cast<double>(e->M0) * M_0_LSB;
+                            gps_eph_iterator->second.Cuc = static_cast<double>(e->Cuc) * C_UC_LSB;
+                            gps_eph_iterator->second.ecc = static_cast<double>(e->e) * ECCENTRICITY_LSB;
+                            gps_eph_iterator->second.Cus = static_cast<double>(e->Cus) * C_US_LSB;
+                            gps_eph_iterator->second.sqrtA = static_cast<double>(e->A_sqrt) * SQRT_A_LSB;
+                            gps_eph_iterator->second.toe = static_cast<double>(e->toe) * T_OE_LSB;
+                            // miss fit interval flag (1 bit)
+                            gps_eph_iterator->second.AODO = e->AODA * AODO_LSB;
+                            gps_eph_iterator->second.Cic = static_cast<double>(e->Cic) * C_IC_LSB;
+                            gps_eph_iterator->second.OMEGA_0 = static_cast<double>(e->OMEGA_0) * OMEGA_0_LSB;
+                            gps_eph_iterator->second.Cis = static_cast<double>(e->Cis) * C_IS_LSB;
+                            gps_eph_iterator->second.i_0 = static_cast<double>(e->i0) * I_0_LSB;
+                            gps_eph_iterator->second.Crs = static_cast<double>(e->Crs) * C_RS_LSB;
+                            gps_eph_iterator->second.omega = static_cast<double>(e->w) * OMEGA_LSB;
+                            gps_eph_iterator->second.OMEGAdot = static_cast<double>(e->OMEGA_dot) * OMEGA_DOT_LSB;
+                            gps_eph_iterator->second.idot = static_cast<double>(e->i_dot) * I_DOT_LSB;
                         }
-                    else
-                        {
-                            gps_eph_iterator->second.WN = 0;
-                            gps_eph_iterator->second.tow = 0;
-                        }
-                    gps_eph_iterator->second.PRN = e->prn;
-                    // SV navigation model
-                    gps_eph_iterator->second.code_on_L2 = e->bits;
-                    gps_eph_iterator->second.SV_accuracy = e->ura;  // User Range Accuracy (URA)
-                    gps_eph_iterator->second.SV_health = e->health;
-                    gps_eph_iterator->second.IODC = static_cast<double>(e->IODC);
-                    // miss P flag (1 bit)
-                    // miss SF1 Reserved (87 bits)
-                    gps_eph_iterator->second.TGD = static_cast<double>(e->tgd) * T_GD_LSB;
-                    gps_eph_iterator->second.toc = static_cast<double>(e->toc) * T_OC_LSB;
-                    gps_eph_iterator->second.af0 = static_cast<double>(e->AF0) * A_F0_LSB;
-                    gps_eph_iterator->second.af1 = static_cast<double>(e->AF1) * A_F1_LSB;
-                    gps_eph_iterator->second.af2 = static_cast<double>(e->AF2) * A_F2_LSB;
-                    gps_eph_iterator->second.Crc = static_cast<double>(e->Crc) * C_RC_LSB;
-                    gps_eph_iterator->second.delta_n = static_cast<double>(e->delta_n) * DELTA_N_LSB;
-                    gps_eph_iterator->second.M_0 = static_cast<double>(e->M0) * M_0_LSB;
-                    gps_eph_iterator->second.Cuc = static_cast<double>(e->Cuc) * C_UC_LSB;
-                    gps_eph_iterator->second.ecc = static_cast<double>(e->e) * ECCENTRICITY_LSB;
-                    gps_eph_iterator->second.Cus = static_cast<double>(e->Cus) * C_US_LSB;
-                    gps_eph_iterator->second.sqrtA = static_cast<double>(e->A_sqrt) * SQRT_A_LSB;
-                    gps_eph_iterator->second.toe = static_cast<double>(e->toe) * T_OE_LSB;
-                    // miss fit interval flag (1 bit)
-                    gps_eph_iterator->second.AODO = e->AODA * AODO_LSB;
-                    gps_eph_iterator->second.Cic = static_cast<double>(e->Cic) * C_IC_LSB;
-                    gps_eph_iterator->second.OMEGA_0 = static_cast<double>(e->OMEGA_0) * OMEGA_0_LSB;
-                    gps_eph_iterator->second.Cis = static_cast<double>(e->Cis) * C_IS_LSB;
-                    gps_eph_iterator->second.i_0 = static_cast<double>(e->i0) * I_0_LSB;
-                    gps_eph_iterator->second.Crs = static_cast<double>(e->Crs) * C_RS_LSB;
-                    gps_eph_iterator->second.omega = static_cast<double>(e->w) * OMEGA_LSB;
-                    gps_eph_iterator->second.OMEGAdot = static_cast<double>(e->OMEGA_dot) * OMEGA_DOT_LSB;
-                    gps_eph_iterator->second.idot = static_cast<double>(e->i_dot) * I_DOT_LSB;
                 }
         }
 
@@ -344,18 +346,21 @@ void Gnss_Sdr_Supl_Client::read_supl_data()
                             gps_acq_map.insert(std::pair<int, Gps_Acq_Assist>(e->prn, gps_acq_assist));
                             gps_acq_iterator = this->gps_acq_map.find(e->prn);
                         }
-                    // fill the acquisition assistance structure
-                    gps_acq_iterator->second.PRN = e->prn;
-                    gps_acq_iterator->second.tow = static_cast<double>(assist.acq_time);
-                    gps_acq_iterator->second.Doppler0 = static_cast<double>(e->doppler0);
-                    gps_acq_iterator->second.Doppler1 = static_cast<double>(e->doppler1);
-                    gps_acq_iterator->second.dopplerUncertainty = static_cast<double>(e->d_win);
-                    gps_acq_iterator->second.Code_Phase = static_cast<double>(e->code_ph);
-                    gps_acq_iterator->second.Code_Phase_int = static_cast<double>(e->code_ph_int);
-                    gps_acq_iterator->second.Code_Phase_window = static_cast<double>(e->code_ph_win);
-                    gps_acq_iterator->second.Azimuth = static_cast<double>(e->az);
-                    gps_acq_iterator->second.Elevation = static_cast<double>(e->el);
-                    gps_acq_iterator->second.GPS_Bit_Number = static_cast<double>(e->bit_num);
+                    if (gps_acq_iterator != gps_acq_map.end())
+                        {
+                            // fill the acquisition assistance structure
+                            gps_acq_iterator->second.PRN = e->prn;
+                            gps_acq_iterator->second.tow = static_cast<double>(assist.acq_time);
+                            gps_acq_iterator->second.Doppler0 = static_cast<double>(e->doppler0);
+                            gps_acq_iterator->second.Doppler1 = static_cast<double>(e->doppler1);
+                            gps_acq_iterator->second.dopplerUncertainty = static_cast<double>(e->d_win);
+                            gps_acq_iterator->second.Code_Phase = static_cast<double>(e->code_ph);
+                            gps_acq_iterator->second.Code_Phase_int = static_cast<double>(e->code_ph_int);
+                            gps_acq_iterator->second.Code_Phase_window = static_cast<double>(e->code_ph_win);
+                            gps_acq_iterator->second.Azimuth = static_cast<double>(e->az);
+                            gps_acq_iterator->second.Elevation = static_cast<double>(e->el);
+                            gps_acq_iterator->second.GPS_Bit_Number = static_cast<double>(e->bit_num);
+                        }
                 }
         }
 }
@@ -418,6 +423,11 @@ bool Gnss_Sdr_Supl_Client::load_gal_ephemeris_xml(const std::string& file_name)
             gal_ephemeris_map.clear();
             xml >> boost::serialization::make_nvp("GNSS-SDR_gal_ephemeris_map", this->gal_ephemeris_map);
             LOG(INFO) << "Loaded Ephemeris map data with " << this->gal_ephemeris_map.size() << " satellites";
+            // Convert to full GPS week number
+            for (auto& gal_eph_iter : this->gal_ephemeris_map)
+                {
+                    gal_eph_iter.second.WN -= 1024;
+                }
         }
     catch (std::exception& e)
         {
@@ -428,7 +438,7 @@ bool Gnss_Sdr_Supl_Client::load_gal_ephemeris_xml(const std::string& file_name)
 }
 
 
-bool save_gal_ephemeris_map_xml(const std::string& file_name, std::map<int, Galileo_Ephemeris> eph_map)
+bool Gnss_Sdr_Supl_Client::save_gal_ephemeris_map_xml(const std::string& file_name, std::map<int, Galileo_Ephemeris> eph_map)
 {
     if (eph_map.empty() == false)
         {
@@ -475,7 +485,7 @@ bool Gnss_Sdr_Supl_Client::load_cnav_ephemeris_xml(const std::string& file_name)
 }
 
 
-bool save_cnav_ephemeris_map_xml(const std::string& file_name, std::map<int, Gps_CNAV_Ephemeris> eph_map)
+bool Gnss_Sdr_Supl_Client::save_cnav_ephemeris_map_xml(const std::string& file_name, std::map<int, Gps_CNAV_Ephemeris> eph_map)
 {
     if (eph_map.empty() == false)
         {
@@ -509,9 +519,9 @@ bool Gnss_Sdr_Supl_Client::load_gnav_ephemeris_xml(const std::string& file_name)
         {
             ifs.open(file_name.c_str(), std::ifstream::binary | std::ifstream::in);
             boost::archive::xml_iarchive xml(ifs);
-            gps_cnav_ephemeris_map.clear();
+            glonass_gnav_ephemeris_map.clear();
             xml >> boost::serialization::make_nvp("GNSS-SDR_gnav_ephemeris_map", this->glonass_gnav_ephemeris_map);
-            LOG(INFO) << "Loaded GLONASS ephemeris map data with " << this->gps_cnav_ephemeris_map.size() << " satellites";
+            LOG(INFO) << "Loaded GLONASS ephemeris map data with " << this->glonass_gnav_ephemeris_map.size() << " satellites";
         }
     catch (std::exception& e)
         {
@@ -522,7 +532,7 @@ bool Gnss_Sdr_Supl_Client::load_gnav_ephemeris_xml(const std::string& file_name)
 }
 
 
-bool save_gnav_ephemeris_map_xml(const std::string& file_name, std::map<int, Glonass_Gnav_Ephemeris> eph_map)
+bool Gnss_Sdr_Supl_Client::save_gnav_ephemeris_map_xml(const std::string& file_name, std::map<int, Glonass_Gnav_Ephemeris> eph_map)
 {
     if (eph_map.empty() == false)
         {
@@ -838,7 +848,7 @@ bool Gnss_Sdr_Supl_Client::load_gal_almanac_xml(const std::string& file_name)
         }
     catch (std::exception& e)
         {
-            // Maybe the file is from https://www.gsc-europa.eu/system-status/almanac-data ?
+            // Maybe the file is from https://www.gsc-europa.eu/gsc-products/almanac ?
             return this->read_gal_almanac_from_gsa(file_name);
         }
     LOG(INFO) << "Loaded Galileo almanac map data with " << this->gal_almanac_map.size() << " satellites";
@@ -863,6 +873,7 @@ bool Gnss_Sdr_Supl_Client::read_gal_almanac_from_gsa(const std::string& file_nam
             Galileo_Almanac gal_alm;
             try
                 {
+                    const double sqrtAnominal = 5440.588203494;  // square root of Galileo nominal orbit semi-major axis
                     uint32_t prn = static_cast<uint32_t>(std::stoi(almanac.child_value("SVID")));
                     gal_alm.PRN = prn;
                     gal_alm.toa = std::stoi(almanac.child("almanac").child_value("t0a"));
@@ -871,7 +882,7 @@ bool Gnss_Sdr_Supl_Client::read_gal_almanac_from_gsa(const std::string& file_nam
                     gal_alm.delta_i = std::stod(almanac.child("almanac").child_value("deltai"));
                     gal_alm.M_0 = std::stod(almanac.child("almanac").child_value("m0"));
                     gal_alm.ecc = std::stod(almanac.child("almanac").child_value("ecc"));
-                    gal_alm.sqrtA = std::stod(almanac.child("almanac").child_value("aSqRoot"));
+                    gal_alm.sqrtA = std::stod(almanac.child("almanac").child_value("aSqRoot")) + sqrtAnominal;
                     gal_alm.OMEGA_0 = std::stod(almanac.child("almanac").child_value("omega0"));
                     gal_alm.omega = std::stod(almanac.child("almanac").child_value("w"));
                     gal_alm.OMEGAdot = std::stod(almanac.child("almanac").child_value("omegaDot"));

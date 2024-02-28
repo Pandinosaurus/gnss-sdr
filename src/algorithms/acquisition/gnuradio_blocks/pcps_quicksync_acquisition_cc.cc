@@ -59,61 +59,56 @@ pcps_quicksync_acquisition_cc::pcps_quicksync_acquisition_cc(
     bool bit_transition_flag,
     bool dump,
     const std::string& dump_filename,
-    bool enable_monitor_output) : gr::block("pcps_quicksync_acquisition_cc",
-                                      gr::io_signature::make(1, 1, static_cast<int>(sizeof(gr_complex) * sampled_ms * samples_per_ms)),
-                                      gr::io_signature::make(0, 1, sizeof(Gnss_Synchro)))
+    bool enable_monitor_output)
+    : gr::block("pcps_quicksync_acquisition_cc",
+          gr::io_signature::make(1, 1, static_cast<int>(sizeof(gr_complex) * sampled_ms * samples_per_ms)),
+          gr::io_signature::make(0, 1, sizeof(Gnss_Synchro))),
+      d_dump_filename(dump_filename),
+      d_gnss_synchro(nullptr),
+      d_fs_in(fs_in),
+      d_sample_counter(0ULL),
+      d_noise_floor_power(0),
+      d_threshold(0),
+      d_doppler_freq(0),
+      d_mag(0),
+      d_input_power(0.0),
+      d_test_statistics(0),
+      d_samples_per_ms(samples_per_ms),
+      d_samples_per_code(samples_per_code),
+      d_state(0),
+      d_channel(0),
+      d_folding_factor(folding_factor),
+      d_doppler_resolution(0),
+      d_doppler_max(doppler_max),
+      d_doppler_step(0),
+      d_sampled_ms(sampled_ms),
+      d_max_dwells(max_dwells),
+      d_well_count(0),
+      d_fft_size((d_samples_per_code) / d_folding_factor),
+      d_num_doppler_bins(0),
+      d_code_phase(0),
+      d_bit_transition_flag(bit_transition_flag),
+      d_active(false),
+      d_dump(dump),
+      d_enable_monitor_output(enable_monitor_output)
 {
     this->message_port_register_out(pmt::mp("events"));
-    d_sample_counter = 0ULL;  // SAMPLE COUNTER
-    d_active = false;
-    d_state = 0;
-    d_fs_in = fs_in;
-    d_samples_per_ms = samples_per_ms;
-    d_samples_per_code = samples_per_code;
-    d_sampled_ms = sampled_ms;
-    d_max_dwells = max_dwells;
-    d_well_count = 0;
-    d_doppler_max = doppler_max;
-    d_mag = 0;
-    d_input_power = 0.0;
-    d_num_doppler_bins = 0;
-    d_bit_transition_flag = bit_transition_flag;
-    d_folding_factor = folding_factor;
 
-    // fft size is reduced.
-    d_fft_size = (d_samples_per_code) / d_folding_factor;
+    d_fft_codes = std::vector<gr_complex>(d_fft_size);
+    d_magnitude = std::vector<float>(d_samples_per_code * d_folding_factor);
+    d_magnitude_folded = std::vector<float>(d_fft_size);
+    d_possible_delay = std::vector<uint32_t>(d_folding_factor);
+    d_corr_output_f = std::vector<float>(d_folding_factor);
 
-    d_fft_codes.reserve(d_fft_size);
-    d_magnitude.reserve(d_samples_per_code * d_folding_factor);
-    d_magnitude_folded.reserve(d_fft_size);
-
-    d_possible_delay.reserve(d_folding_factor);
-    d_corr_output_f.reserve(d_folding_factor);
-
-    /*Create the d_code signal , which would store the values of the code in its
-    original form to perform later correlation in time domain*/
+    // Create the d_code vector, which would store the values of the code in its
+    // original form to perform later correlation in time domain
     d_code = std::vector<gr_complex>(d_samples_per_code, lv_cmake(0.0F, 0.0F));
 
     d_fft_if = gnss_fft_fwd_make_unique(d_fft_size);
     d_ifft = gnss_fft_rev_make_unique(d_fft_size);
 
-    // For dumping samples into a file
-    d_dump = dump;
-    d_dump_filename = dump_filename;
-
-    d_enable_monitor_output = enable_monitor_output;
-
     d_code_folded = std::vector<gr_complex>(d_fft_size, lv_cmake(0.0F, 0.0F));
-    d_signal_folded.reserve(d_fft_size);
-    d_noise_floor_power = 0;
-    d_doppler_resolution = 0;
-    d_threshold = 0;
-    d_doppler_step = 0;
-    d_gnss_synchro = nullptr;
-    d_code_phase = 0;
-    d_doppler_freq = 0;
-    d_test_statistics = 0;
-    d_channel = 0;
+    d_signal_folded = std::vector<gr_complex>(d_fft_size);
 }
 
 
@@ -141,9 +136,9 @@ void pcps_quicksync_acquisition_cc::set_local_code(std::complex<float>* code)
 {
     /* save a local copy of the code without the folding process to perform corre-
     lation in time in the final steps of the acquisition stage */
-    memcpy(d_code.data(), code, sizeof(gr_complex) * d_samples_per_code);
+    std::copy(code, code + d_samples_per_code, d_code.data());
 
-    memcpy(d_fft_if->get_inbuf(), d_code_folded.data(), sizeof(gr_complex) * (d_fft_size));
+    std::copy(d_code_folded.data(), d_code_folded.data() + d_fft_size, d_fft_if->get_inbuf());
 
     /* perform folding of the code by the factorial factor parameter. Notice that
     folding of the code in the time stage would result in a downsampled spectrum
@@ -261,7 +256,7 @@ int pcps_quicksync_acquisition_cc::general_work(int noutput_items,
                         d_state = 1;
                     }
 
-                d_sample_counter += static_cast<uint64_t>(d_sampled_ms * d_samples_per_ms * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_sampled_ms) * d_samples_per_ms * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
                 // DLOG(INFO) << "END CASE 0";
                 break;
@@ -295,7 +290,7 @@ int pcps_quicksync_acquisition_cc::general_work(int noutput_items,
                 d_test_statistics = 0.0;
                 d_noise_floor_power = 0.0;
 
-                d_sample_counter += static_cast<uint64_t>(d_sampled_ms * d_samples_per_ms);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_sampled_ms) * d_samples_per_ms;  // sample counter
 
                 d_well_count++;
 
@@ -322,7 +317,7 @@ int pcps_quicksync_acquisition_cc::general_work(int noutput_items,
                         // at zero. This is done to avoid over acumulation when performing
                         // the folding process to be stored in d_fft_if->get_inbuf()
                         d_signal_folded = std::vector<gr_complex>(d_fft_size, lv_cmake(0.0F, 0.0F));
-                        memcpy(d_fft_if->get_inbuf(), d_signal_folded.data(), sizeof(gr_complex) * (d_fft_size));
+                        std::copy(d_signal_folded.data(), d_signal_folded.data() + d_fft_size, d_fft_if->get_inbuf());
 
                         // Doppler search steps and then multiplication of the incoming
                         // signal with the doppler wipeoffs to eliminate frequency offset
@@ -397,9 +392,8 @@ int pcps_quicksync_acquisition_cc::general_work(int noutput_items,
                                         for (int32_t i = 0; i < static_cast<int32_t>(d_folding_factor); i++)
                                             {
                                                 // Copy a signal of 1 code length into suggested buffer.
-                                                // The copied signal must have doppler effect corrected*/
-                                                memcpy(in_1code.data(), &in_temp[d_possible_delay[i]],
-                                                    sizeof(gr_complex) * (d_samples_per_code));
+                                                // The copied signal must have doppler effect corrected
+                                                std::copy_n(&in_temp[d_possible_delay[i]], d_samples_per_code, in_1code.data());
 
                                                 // Perform multiplication of the unmodified local
                                                 // generated code with the incoming signal with doppler
@@ -500,7 +494,7 @@ int pcps_quicksync_acquisition_cc::general_work(int noutput_items,
                 d_active = false;
                 d_state = 0;
 
-                d_sample_counter += static_cast<uint64_t>(d_sampled_ms * d_samples_per_ms * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_sampled_ms) * d_samples_per_ms * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 acquisition_message = 1;
@@ -513,7 +507,7 @@ int pcps_quicksync_acquisition_cc::general_work(int noutput_items,
                         auto** out = reinterpret_cast<Gnss_Synchro**>(&output_items[0]);
                         Gnss_Synchro current_synchro_data = Gnss_Synchro();
                         current_synchro_data = *d_gnss_synchro;
-                        *out[0] = current_synchro_data;
+                        *out[0] = std::move(current_synchro_data);
                         noutput_items = 1;  // Number of Gnss_Synchro objects produced
                     }
 
@@ -543,7 +537,7 @@ int pcps_quicksync_acquisition_cc::general_work(int noutput_items,
                 d_active = false;
                 d_state = 0;
 
-                d_sample_counter += static_cast<uint64_t>(d_sampled_ms * d_samples_per_ms * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_sampled_ms) * d_samples_per_ms * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 acquisition_message = 2;

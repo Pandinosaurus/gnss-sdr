@@ -26,7 +26,8 @@
 #define GNSS_SDR_FPGA_BUFFER_MONITOR_H
 
 #include <cstdint>  // for int32_t
-#include <fstream>  // for string, ofstream
+#include <fstream>  // for std::ofstream
+#include <string>   // for std::string
 
 /** \addtogroup Signal_Source
  * \{ */
@@ -60,7 +61,7 @@ public:
     void check_buffer_overflow_and_monitor_buffer_status();
 
 private:
-    static const size_t FPGA_PAGE_SIZE = 0x10000;
+    static const size_t FPGA_PAGE_SIZE = 0x1000;
     static const uint32_t test_register_writeval = 0x55AA;
     static const uint32_t num_sapmples_per_buffer_element = 2;
     // write addresses
@@ -80,6 +81,9 @@ private:
     int32_t buffer_monitor_test_register();
     void close_device();
 
+    std::string d_dump_filename;
+    std::ofstream d_dump_file;
+
     volatile unsigned* d_map_base;  // driver memory map corresponding to the FPGA buffer monitor
     int d_device_descriptor;        // driver descriptor corresponding to the FPGA buffer monitor
 
@@ -89,8 +93,6 @@ private:
     uint32_t d_max_buff_occ_freq_band_1;
 
     bool d_dump;
-    std::string d_dump_filename;
-    std::ofstream d_dump_file;
 };
 
 

@@ -10,6 +10,21 @@ namespace cpu_features
 {
 namespace
 {
+
+TEST(CpuinfoArmTest, ArmFeaturesEnum)
+{
+    const char* last_name = GetArmFeaturesEnumName(ARM_LAST_);
+    EXPECT_STREQ(last_name, "unknown_feature");
+    for (int i = static_cast<int>(ARM_SWP); i != static_cast<int>(ARM_LAST_); ++i)
+        {
+            const auto feature = static_cast<ArmFeaturesEnum>(i);
+            const char* name = GetArmFeaturesEnumName(feature);
+            ASSERT_FALSE(name == nullptr);
+            EXPECT_STRNE(name, "");
+            EXPECT_STRNE(name, last_name);
+        }
+}
+
 TEST(CpuinfoArmTest, FromHardwareCap)
 {
     ResetHwcaps();
@@ -103,7 +118,6 @@ CPU architecture: 7
 CPU variant     : 0x0
 CPU part        : 0xb76
 CPU revision    : 7
-
 Hardware        : BCM2835
 Revision        : 9000c1
 Serial          : 000000006cd946f3)");
@@ -156,7 +170,6 @@ CPU architecture: 7
 CPU variant     : 0x4
 CPU part        : 0xc09
 CPU revision    : 1
-
 processor       : 1
 model name      : ARMv7 Processor rev 1 (v7l)
 BogoMIPS        : 50.00
@@ -166,7 +179,6 @@ CPU architecture: 7
 CPU variant     : 0x4
 CPU part        : 0xc09
 CPU revision    : 1
-
 Hardware        : Marvell Armada 380/385 (Device Tree)
 Revision        : 0000
 Serial          : 0000000000000000)");
@@ -221,7 +233,6 @@ CPU architecture: 7
 CPU variant     : 0x0
 CPU part        : 0xb76
 CPU revision    : 6
-
 Hardware        : SPICA
 Revision        : 0020
 Serial          : 33323613546d00ec )");
@@ -267,17 +278,14 @@ TEST(CpuinfoArmTest, InvalidNeon)
         R"(Processor: ARMv7 Processory rev 0 (v71)
 processor: 0
 BogoMIPS: 13.50
-
 Processor: 1
 BogoMIPS: 13.50
-
 Features: swp half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt
 CPU implementer : 0x51
 CPU architecture: 7
 CPU variant: 0x1
 CPU part: 0x04d
 CPU revision: 0
-
 Hardware: SAMSUNG M2
 Revision: 0010
 Serial: 00001e030000354e)");
@@ -324,6 +332,25 @@ CPU revision	: 3)");
     EXPECT_EQ(GetArmCpuId(&info), 0x510006f3);
 }
 
+// The 2013 Nexus 7 (Qualcomm Krait) kernel configuration forgets to report IDIV
+// support.
+TEST(CpuinfoArmTest, Nexus7_2013_0x511006f0)
+{
+    ResetHwcaps();
+    auto& fs = GetEmptyFilesystem();
+    fs.CreateFile("/proc/cpuinfo",
+        R"(CPU implementer  : 0x51
+CPU architecture: 7
+CPU variant : 0x1
+CPU part  : 0x06f
+CPU revision  : 0)");
+    const auto info = GetArmInfo();
+    EXPECT_TRUE(info.features.idiva);
+    EXPECT_TRUE(info.features.idivt);
+
+    EXPECT_EQ(GetArmCpuId(&info), 0x511006f0);
+}
+
 // The emulator-specific Android 4.2 kernel fails to report support for the
 // 32-bit ARM IDIV instruction. Technically, this is a feature of the virtual
 // CPU implemented by the emulator.
@@ -340,7 +367,6 @@ CPU architecture: 7
 CPU variant	: 0x0
 CPU part	: 0xc08
 CPU revision	: 0
-
 Hardware	: Goldfish
 Revision	: 0000
 Serial		: 0000000000000000)");

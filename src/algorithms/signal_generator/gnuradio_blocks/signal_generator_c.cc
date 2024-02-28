@@ -28,6 +28,7 @@
 #include "gps_sdr_signal_replica.h"
 #include <gnuradio/io_signature.h>
 #include <volk_gnsssdr/volk_gnsssdr.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
@@ -35,9 +36,9 @@
 
 
 /*
-* Create a new instance of signal_generator_c and return
-* a boost shared_ptr. This is effectively the public constructor.
-*/
+ * Create a new instance of signal_generator_c and return
+ * a boost shared_ptr. This is effectively the public constructor.
+ */
 signal_generator_c_sptr
 signal_make_generator_c(const std::vector<std::string> &signal1, const std::vector<std::string> &system, const std::vector<unsigned int> &PRN,
     const std::vector<float> &CN0_dB, const std::vector<float> &doppler_Hz,
@@ -50,8 +51,8 @@ signal_make_generator_c(const std::vector<std::string> &signal1, const std::vect
 
 
 /*
-* The private constructor
-*/
+ * The private constructor
+ */
 signal_generator_c::signal_generator_c(std::vector<std::string> signal1,
     std::vector<std::string> system,
     const std::vector<unsigned int> &PRN,
@@ -87,7 +88,7 @@ void signal_generator_c::init()
 {
     work_counter_ = 0;
 
-    complex_phase_.reserve(vector_length_);
+    complex_phase_ = std::vector<gr_complex>(vector_length_);
     start_phase_rad_.reserve(num_sats_);
     current_data_bit_int_.reserve(num_sats_);
     ms_counter_.reserve(num_sats_);
@@ -187,8 +188,8 @@ void signal_generator_c::generate_codes()
                     // Concatenate "num_of_codes_per_vector_" codes
                     for (unsigned int i = 0; i < num_of_codes_per_vector_[sat]; i++)
                         {
-                            memcpy(&(sampled_code_data_[sat][i * samples_per_code_[sat]]),
-                                code.data(), sizeof(gr_complex) * samples_per_code_[sat]);
+                            std::copy_n(code.data(), samples_per_code_[sat],
+                                &(sampled_code_data_[sat][i * samples_per_code_[sat]]));
                         }
                 }
             else if (system_[sat] == "R")
@@ -209,8 +210,8 @@ void signal_generator_c::generate_codes()
                     // Concatenate "num_of_codes_per_vector_" codes
                     for (unsigned int i = 0; i < num_of_codes_per_vector_[sat]; i++)
                         {
-                            memcpy(&(sampled_code_data_[sat][i * samples_per_code_[sat]]),
-                                code.data(), sizeof(gr_complex) * samples_per_code_[sat]);
+                            std::copy_n(code.data(), samples_per_code_[sat],
+                                &(sampled_code_data_[sat][i * samples_per_code_[sat]]));
                         }
                 }
             else if (system_[sat] == "E")
@@ -261,8 +262,8 @@ void signal_generator_c::generate_codes()
                             // Concatenate "num_of_codes_per_vector_" codes
                             for (unsigned int i = 0; i < num_of_codes_per_vector_[sat]; i++)
                                 {
-                                    memcpy(&(sampled_code_data_[sat][i * samples_per_code_[sat]]),
-                                        code.data(), sizeof(gr_complex) * samples_per_code_[sat]);
+                                    std::copy_n(code.data(), samples_per_code_[sat],
+                                        &(sampled_code_data_[sat][i * samples_per_code_[sat]]));
                                 }
                             // Generate E6C signal (100 code-periods, with secondary code)
                             galileo_e6_c_code_gen_complex_sampled(sampled_code_pilot_[sat], PRN_[sat], fs_in_,
@@ -297,8 +298,8 @@ void signal_generator_c::generate_codes()
                             // Concatenate "num_of_codes_per_vector_" codes
                             for (unsigned int i = 0; i < num_of_codes_per_vector_[sat]; i++)
                                 {
-                                    memcpy(&(sampled_code_data_[sat][i * samples_per_code_[sat]]),
-                                        code.data(), sizeof(gr_complex) * samples_per_code_[sat]);
+                                    std::copy_n(code.data(), samples_per_code_[sat],
+                                        &(sampled_code_data_[sat][i * samples_per_code_[sat]]));
                                 }
 
                             // Generate E1C signal (25 code-periods, with secondary code)

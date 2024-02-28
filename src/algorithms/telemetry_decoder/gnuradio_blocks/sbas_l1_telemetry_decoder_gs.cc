@@ -16,7 +16,7 @@
 
 #include "sbas_l1_telemetry_decoder_gs.h"
 #include "gnss_synchro.h"
-#include "viterbi_decoder.h"
+#include "viterbi_decoder_sbas.h"
 #include <glog/logging.h>
 #include <gnuradio/io_signature.h>
 #include <pmt/pmt_sugar.h>  // for mp
@@ -25,6 +25,7 @@
 #include <cmath>      // for abs
 #include <exception>  // for exception
 #include <iomanip>    // for operator<<, setw
+#include <utility>    // for std::move
 
 // logging levels
 #define EVENT 2      // logs important events which don't occur every block
@@ -45,7 +46,10 @@ sbas_l1_telemetry_decoder_gs::sbas_l1_telemetry_decoder_gs(
     const Gnss_Satellite &satellite,
     bool dump) : gr::block("sbas_l1_telemetry_decoder_gs",
                      gr::io_signature::make(1, 1, sizeof(Gnss_Synchro)),
-                     gr::io_signature::make(1, 1, sizeof(Gnss_Synchro)))
+                     gr::io_signature::make(1, 1, sizeof(Gnss_Synchro))),
+                 d_dump(dump),
+                 d_channel(0),
+                 d_block_size(D_SAMPLES_PER_SYMBOL * D_SYMBOLS_PER_BIT * D_BLOCK_SIZE_IN_BITS)
 {
     // prevent telemetry symbols accumulation in output buffers
     this->set_max_noutput_items(1);
@@ -54,11 +58,9 @@ sbas_l1_telemetry_decoder_gs::sbas_l1_telemetry_decoder_gs(
     // Control messages to tracking block
     this->message_port_register_out(pmt::mp("telemetry_to_trk"));
     // initialize internal vars
-    d_dump = dump;
+
     d_satellite = Gnss_Satellite(satellite.get_system(), satellite.get_PRN());
     LOG(INFO) << "SBAS L1 TELEMETRY PROCESSING: satellite " << d_satellite;
-    d_block_size = D_SAMPLES_PER_SYMBOL * D_SYMBOLS_PER_BIT * D_BLOCK_SIZE_IN_BITS;
-    d_channel = 0;
     set_output_multiple(1);
 }
 
@@ -96,8 +98,6 @@ void sbas_l1_telemetry_decoder_gs::set_channel(int32_t channel)
 // ### helper class for sample alignment ###
 sbas_l1_telemetry_decoder_gs::Sample_Aligner::Sample_Aligner()
 {
-    d_n_smpls_in_history = 3;
-    d_iir_par = 0.05;
     reset();
 }
 
@@ -175,13 +175,11 @@ bool sbas_l1_telemetry_decoder_gs::Sample_Aligner::get_symbols(const std::vector
 sbas_l1_telemetry_decoder_gs::Symbol_Aligner_And_Decoder::Symbol_Aligner_And_Decoder()
 {
     // convolutional code properties
-    d_KK = 7;
     const int32_t nn = 2;
     std::array<int32_t, nn> g_encoder{121, 91};
 
-    d_vd1 = std::make_shared<Viterbi_Decoder>(g_encoder.data(), d_KK, nn);
-    d_vd2 = std::make_shared<Viterbi_Decoder>(g_encoder.data(), d_KK, nn);
-    d_past_symbol = 0;
+    d_vd1 = std::make_shared<Viterbi_Decoder_Sbas>(g_encoder.data(), d_KK, nn);
+    d_vd2 = std::make_shared<Viterbi_Decoder_Sbas>(g_encoder.data(), d_KK, nn);
 }
 
 
@@ -473,7 +471,7 @@ int sbas_l1_telemetry_decoder_gs::general_work(int noutput_items __attribute__((
     // UPDATE GNSS SYNCHRO DATA
     // actually the SBAS telemetry decoder doesn't support ranging
     current_symbol.Flag_valid_word = false;  // indicate to observable block that this synchro object isn't valid for pseudorange computation
-    out[0] = current_symbol;
+    out[0] = std::move(current_symbol);
     consume_each(1);  // tell scheduler input items consumed
     return 1;         // tell scheduler output items produced
 }

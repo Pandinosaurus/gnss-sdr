@@ -4,12 +4,12 @@
 # SPDX-FileCopyrightText: 2010-2020 C. Fernandez-Prades cfernandez(at)cttc.es
 # SPDX-License-Identifier: BSD-3-Clause
 
-protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${CMAKE_SOURCE_DIR}/docs/protobuf/monitor_pvt.proto)
-protobuf_generate_cpp(PROTO_SRCS2 PROTO_HDRS2 ${CMAKE_SOURCE_DIR}/docs/protobuf/gps_ephemeris.proto)
-protobuf_generate_cpp(PROTO_SRCS3 PROTO_HDRS3 ${CMAKE_SOURCE_DIR}/docs/protobuf/galileo_ephemeris.proto)
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${GNSSSDR_SOURCE_DIR}/docs/protobuf/monitor_pvt.proto)
+protobuf_generate_cpp(PROTO_SRCS2 PROTO_HDRS2 ${GNSSSDR_SOURCE_DIR}/docs/protobuf/gps_ephemeris.proto)
+protobuf_generate_cpp(PROTO_SRCS3 PROTO_HDRS3 ${GNSSSDR_SOURCE_DIR}/docs/protobuf/galileo_ephemeris.proto)
 
 set(PVT_LIB_SOURCES
-    pvt_conf.cc
+    an_packet_printer.cc
     pvt_solution.cc
     geojson_printer.cc
     gpx_printer.cc
@@ -21,9 +21,13 @@ set(PVT_LIB_SOURCES
     rtklib_solver.cc
     monitor_pvt_udp_sink.cc
     monitor_ephemeris_udp_sink.cc
+    has_simple_printer.cc
+    geohash.cc
+    pvt_kf.cc
 )
 
 set(PVT_LIB_HEADERS
+    an_packet_printer.h
     pvt_conf.h
     pvt_solution.h
     geojson_printer.h
@@ -40,6 +44,9 @@ set(PVT_LIB_HEADERS
     serdes_galileo_eph.h
     serdes_gps_eph.h
     monitor_ephemeris_udp_sink.h
+    has_simple_printer.h
+    geohash.h
+    pvt_kf.h
 )
 
 list(SORT PVT_LIB_HEADERS)
@@ -73,6 +80,10 @@ else()
     )
 endif()
 
+if(CMAKE_ANDROID_ARCH_ABI)
+        target_compile_definitions(pvt_libs PUBLIC -DANDROID=1)
+endif()
+
 target_link_libraries(pvt_libs
     PUBLIC
         Boost::date_time
@@ -91,7 +102,7 @@ get_filename_component(PROTO_INCLUDE_HEADERS_DIR ${PROTO_HDRS} DIRECTORY)
 # for concurrent_queue.h
 target_include_directories(pvt_libs
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/core/receiver
+        ${GNSSSDR_SOURCE_DIR}/src/core/receiver
 )
 
 # Do not apply clang-tidy fixes to protobuf generated headers

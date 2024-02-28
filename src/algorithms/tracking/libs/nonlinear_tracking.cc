@@ -27,37 +27,34 @@
  */
 
 #include "nonlinear_tracking.h"
+#include <utility>
 
 /***************** CUBATURE KALMAN FILTER *****************/
 
 CubatureFilter::CubatureFilter()
+    : x_pred_out(arma::zeros(1, 1)),
+      P_x_pred_out(arma::eye(1, 1) * (1 + 1)),
+      x_est(x_pred_out),
+      P_x_est(P_x_pred_out)
 {
-    int nx = 1;
-    x_pred_out = arma::zeros(nx, 1);
-    P_x_pred_out = arma::eye(nx, nx) * (nx + 1);
-
-    x_est = x_pred_out;
-    P_x_est = P_x_pred_out;
 }
 
 
 CubatureFilter::CubatureFilter(int nx)
+    : x_pred_out(arma::zeros(nx, 1)),
+      P_x_pred_out(arma::eye(nx, nx) * (nx + 1)),
+      x_est(x_pred_out),
+      P_x_est(P_x_pred_out)
 {
-    x_pred_out = arma::zeros(nx, 1);
-    P_x_pred_out = arma::eye(nx, nx) * (nx + 1);
-
-    x_est = x_pred_out;
-    P_x_est = P_x_pred_out;
 }
 
 
 CubatureFilter::CubatureFilter(const arma::vec& x_pred_0, const arma::mat& P_x_pred_0)
+    : x_pred_out(x_pred_0),
+      P_x_pred_out(P_x_pred_0),
+      x_est(x_pred_out),
+      P_x_est(P_x_pred_out)
 {
-    x_pred_out = x_pred_0;
-    P_x_pred_out = P_x_pred_0;
-
-    x_est = x_pred_out;
-    P_x_est = P_x_pred_out;
 }
 
 
@@ -108,8 +105,8 @@ void CubatureFilter::predict_sequential(const arma::vec& x_post, const arma::mat
     P_x_pred = P_x_pred / static_cast<float>(np) - x_pred * x_pred.t() + noise_covariance;
 
     // Store predicted mean and error covariance
-    x_pred_out = x_pred;
-    P_x_pred_out = P_x_pred;
+    x_pred_out = std::move(x_pred);
+    P_x_pred_out = std::move(P_x_pred);
 }
 
 
@@ -189,33 +186,29 @@ arma::mat CubatureFilter::get_P_x_est() const
 /***************** UNSCENTED KALMAN FILTER *****************/
 
 UnscentedFilter::UnscentedFilter()
+    : x_pred_out(arma::zeros(1, 1)),
+      P_x_pred_out(arma::eye(1, 1) * (1 + 1)),
+      x_est(x_pred_out),
+      P_x_est(P_x_pred_out)
 {
-    int nx = 1;
-    x_pred_out = arma::zeros(nx, 1);
-    P_x_pred_out = arma::eye(nx, nx) * (nx + 1);
-
-    x_est = x_pred_out;
-    P_x_est = P_x_pred_out;
 }
 
 
 UnscentedFilter::UnscentedFilter(int nx)
+    : x_pred_out(arma::zeros(nx, 1)),
+      P_x_pred_out(arma::eye(nx, nx) * (nx + 1)),
+      x_est(x_pred_out),
+      P_x_est(P_x_pred_out)
 {
-    x_pred_out = arma::zeros(nx, 1);
-    P_x_pred_out = arma::eye(nx, nx) * (nx + 1);
-
-    x_est = x_pred_out;
-    P_x_est = P_x_pred_out;
 }
 
 
 UnscentedFilter::UnscentedFilter(const arma::vec& x_pred_0, const arma::mat& P_x_pred_0)
+    : x_pred_out(x_pred_0),
+      P_x_pred_out(P_x_pred_0),
+      x_est(x_pred_out),
+      P_x_est(P_x_pred_out)
 {
-    x_pred_out = x_pred_0;
-    P_x_pred_out = P_x_pred_0;
-
-    x_est = x_pred_out;
-    P_x_est = P_x_pred_out;
 }
 
 
@@ -278,8 +271,8 @@ void UnscentedFilter::predict_sequential(const arma::vec& x_post, const arma::ma
     P_x_pred = P_x_pred + noise_covariance;
 
     // Store predicted mean and error covariance
-    x_pred_out = x_pred;
-    P_x_pred_out = P_x_pred;
+    x_pred_out = std::move(x_pred);
+    P_x_pred_out = std::move(P_x_pred);
 }
 
 

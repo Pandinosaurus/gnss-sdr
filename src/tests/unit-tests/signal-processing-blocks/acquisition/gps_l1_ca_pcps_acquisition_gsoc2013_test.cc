@@ -48,7 +48,11 @@
 #else
 #include <gnuradio/analog/sig_source_c.h>
 #endif
-
+#if PMT_USES_BOOST_ANY
+namespace wht = boost;
+#else
+namespace wht = std;
+#endif
 
 // ######## GNURADIO BLOCK MESSAGE RECEVER #########
 class GpsL1CaPcpsAcquisitionGSoC2013Test_msg_rx;
@@ -86,7 +90,7 @@ void GpsL1CaPcpsAcquisitionGSoC2013Test_msg_rx::msg_handler_channel_events(const
             rx_message = message;
             channel_internal_queue.push(rx_message);
         }
-    catch (const boost::bad_any_cast& e)
+    catch (const wht::bad_any_cast& e)
         {
             LOG(WARNING) << "msg_handler_channel_events Bad any_cast: " << e.what();
             rx_message = 0;
@@ -384,7 +388,7 @@ void GpsL1CaPcpsAcquisitionGSoC2013Test::process_message()
             detection_counter++;
 
             // The term -5 is here to correct the additional delay introduced by the FIR filter
-            double delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - static_cast<double>(gnss_synchro.Acq_delay_samples - 5) * 1023.0 / (static_cast<double>(fs_in) * 1e-3));
+            double delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - (gnss_synchro.Acq_delay_samples - 5) * 1023.0 / (static_cast<double>(fs_in) * 1e-3));
             double doppler_error_hz = std::abs(expected_doppler_hz - gnss_synchro.Acq_doppler_hz);
 
             mse_delay += std::pow(delay_error_chips, 2);

@@ -19,6 +19,7 @@
 #include "fir_filter.h"
 #include "galileo_e5a_noncoherent_iq_acquisition_caf.h"
 #include "gen_signal_source.h"
+#include "gnss_block_factory.h"
 #include "gnss_block_interface.h"
 #include "gnss_sdr_valve.h"
 #include "gnss_synchro.h"
@@ -41,6 +42,11 @@
 #include <gnuradio/analog/sig_source.h>
 #else
 #include <gnuradio/analog/sig_source_c.h>
+#endif
+#if PMT_USES_BOOST_ANY
+namespace wht = boost;
+#else
+namespace wht = std;
 #endif
 
 // ######## GNURADIO BLOCK MESSAGE RECEVER #########
@@ -79,7 +85,7 @@ void GalileoE5aPcpsAcquisitionGSoC2014GensourceTest_msg_rx::msg_handler_channel_
             rx_message = message;
             channel_internal_queue.push(rx_message);
         }
-    catch (const boost::bad_any_cast& e)
+    catch (const wht::bad_any_cast& e)
         {
             LOG(WARNING) << "msg_handler_channel_events Bad any_cast: " << e.what();
             rx_message = 0;
@@ -219,7 +225,7 @@ void GalileoE5aPcpsAcquisitionGSoC2014GensourceTest::config_1()
 
     config = std::make_shared<InMemoryConfiguration>();
 
-    config->set_property("Channel.signal", signal);
+    config->set_property("Channel.signal", std::move(signal));
     config->set_property("GNSS-SDR.internal_fs_sps", std::to_string(fs_in));
     config->set_property("SignalSource.fs_hz", std::to_string(fs_in));
     config->set_property("SignalSource.item_type", "gr_complex");
@@ -461,19 +467,19 @@ void GalileoE5aPcpsAcquisitionGSoC2014GensourceTest::process_message()
             switch (sat)
                 {
                 case 0:
-                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - static_cast<double>(gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
+                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips) - (gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
                     doppler_error_hz = std::abs(expected_doppler_hz - gnss_synchro.Acq_doppler_hz);
                     break;
                 case 1:
-                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips1) - static_cast<double>(gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
+                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips1) - (gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
                     doppler_error_hz = std::abs(expected_doppler_hz1 - gnss_synchro.Acq_doppler_hz);
                     break;
                 case 2:
-                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips2) - static_cast<double>(gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
+                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips2) - (gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
                     doppler_error_hz = std::abs(expected_doppler_hz2 - gnss_synchro.Acq_doppler_hz);
                     break;
                 case 3:
-                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips3) - static_cast<double>(gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
+                    delay_error_chips = std::abs(static_cast<double>(expected_delay_chips3) - (gnss_synchro.Acq_delay_samples - 5) * 10230.0 / (static_cast<double>(fs_in) * 1e-3));
                     doppler_error_hz = std::abs(expected_doppler_hz3 - gnss_synchro.Acq_doppler_hz);
                     break;
                 default:  // case 3

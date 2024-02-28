@@ -25,10 +25,11 @@
 #include "pcps_acquisition.h"
 #include <gnuradio/blocks/float_to_complex.h>
 #include <gnuradio/blocks/stream_to_vector.h>
+#include <volk_gnsssdr/volk_gnsssdr_alloc.h>
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
+#include <utility>
 
 /** \addtogroup Acquisition
  * \{ */
@@ -95,8 +96,8 @@ public:
      */
     inline void set_channel_fsm(std::weak_ptr<ChannelFsm> channel_fsm) override
     {
-        channel_fsm_ = channel_fsm;
-        acquisition_->set_channel_fsm(channel_fsm);
+        channel_fsm_ = std::move(channel_fsm);
+        acquisition_->set_channel_fsm(channel_fsm_);
     }
 
     /*!
@@ -151,7 +152,7 @@ public:
 
 private:
     pcps_acquisition_sptr acquisition_;
-    std::vector<std::complex<float>> code_;
+    volk_gnsssdr::vector<std::complex<float>> code_;
     std::weak_ptr<ChannelFsm> channel_fsm_;
     gr::blocks::float_to_complex::sptr float_to_complex_;
     complex_byte_to_float_x2_sptr cbyte_to_float_x2_;

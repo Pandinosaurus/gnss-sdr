@@ -72,7 +72,7 @@ target_link_libraries(acquisition_gr_blocks
 
 target_include_directories(acquisition_gr_blocks
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src/core/receiver
+        ${GNSSSDR_SOURCE_DIR}/src/core/receiver
 )
 
 if(GNURADIO_USES_STD_POINTERS)
@@ -97,8 +97,16 @@ if(ENABLE_OPENCL)
     target_link_libraries(acquisition_gr_blocks PUBLIC OpenCL::OpenCL)
     target_include_directories(acquisition_gr_blocks
         PUBLIC
-            ${CMAKE_SOURCE_DIR}/src/algorithms/libs/opencl
+            ${GNSSSDR_SOURCE_DIR}/src/algorithms/libs/opencl
     )
+endif()
+
+if(VOLK_VERSION)
+    if(VOLK_VERSION VERSION_GREATER 3.0.99)
+        target_compile_definitions(acquisition_gr_blocks
+            PRIVATE -DVOLK_EQUAL_OR_GREATER_31=1
+        )
+    endif()
 endif()
 
 if(ENABLE_CLANG_TIDY)
@@ -113,5 +121,5 @@ endif()
 set_property(TARGET acquisition_gr_blocks
     APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/algorithms/libs/opencl>
+        $<BUILD_INTERFACE:${GNSSSDR_SOURCE_DIR}/src/algorithms/libs/opencl>
 )

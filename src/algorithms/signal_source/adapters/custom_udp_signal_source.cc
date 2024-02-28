@@ -25,14 +25,22 @@
 using namespace std::string_literals;
 
 CustomUDPSignalSource::CustomUDPSignalSource(const ConfigurationInterface* configuration,
-    const std::string& role, unsigned int in_stream, unsigned int out_stream,
+    const std::string& role,
+    unsigned int in_stream,
+    unsigned int out_stream,
     Concurrent_Queue<pmt::pmt_t>* queue __attribute__((unused)))
-    : SignalSourceBase(configuration, role, "Custom_UDP_Signal_Source"s), in_stream_(in_stream), out_stream_(out_stream)
+    : SignalSourceBase(configuration, role, "Custom_UDP_Signal_Source"s),
+      item_size_(sizeof(gr_complex)),
+      RF_channels_(configuration->property(role + ".RF_channels", 1)),
+      channels_in_udp_(configuration->property(role + ".channels_in_udp", 1)),
+      in_stream_(in_stream),
+      out_stream_(out_stream),
+      IQ_swap_(configuration->property(role + ".IQ_swap", false)),
+      dump_(configuration->property(role + ".dump", false))
 {
     // DUMP PARAMETERS
     const std::string default_dump_file("./data/signal_source.dat");
     const std::string default_item_type("gr_complex");
-    dump_ = configuration->property(role + ".dump", false);
     dump_filename_ = configuration->property(role + ".dump_filename", default_dump_file);
 
     // network PARAMETERS
@@ -44,15 +52,9 @@ CustomUDPSignalSource::CustomUDPSignalSource(const ConfigurationInterface* confi
     int port = configuration->property(role + ".port", default_port);
     int payload_bytes = configuration->property(role + ".payload_bytes", 1024);
 
-    RF_channels_ = configuration->property(role + ".RF_channels", 1);
-    channels_in_udp_ = configuration->property(role + ".channels_in_udp", 1);
-    IQ_swap_ = configuration->property(role + ".IQ_swap", false);
-
     const std::string default_sample_type("cbyte");
     const std::string sample_type = configuration->property(role + ".sample_type", default_sample_type);
     item_type_ = configuration->property(role + ".item_type", default_item_type);
-    // output item size is always gr_complex
-    item_size_ = sizeof(gr_complex);
 
     udp_gnss_rx_source_ = Gr_Complex_Ip_Packet_Source::make(capture_device,
         address,

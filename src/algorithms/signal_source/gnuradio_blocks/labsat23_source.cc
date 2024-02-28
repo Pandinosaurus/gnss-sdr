@@ -21,15 +21,20 @@
 #include "INIReader.h"
 #include "command_event.h"
 #include "gnss_sdr_make_unique.h"
-#include <boost/any.hpp>
 #include <gnuradio/io_signature.h>
 #include <algorithm>
 #include <array>
 #include <bitset>
 #include <exception>
+#include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <utility>
+
+#if HAS_BOOST_ENDIAN
+#include <boost/endian/conversion.hpp>
+#endif
 
 
 labsat23_source_sptr labsat23_make_source_sptr(const char *signal_file_basename, const std::vector<int> &channel_selector, Concurrent_Queue<pmt::pmt_t> *queue, bool digital_io_enabled)
@@ -44,18 +49,17 @@ labsat23_source::labsat23_source(const char *signal_file_basename,
     bool digital_io_enabled) : gr::block("labsat23_source",
                                    gr::io_signature::make(0, 0, 0),
                                    gr::io_signature::make(1, 3, sizeof(gr_complex))),
-                               d_queue(queue)
+                               d_queue(queue),
+                               d_channel_selector_config(channel_selector),
+                               d_current_file_number(0),
+                               d_labsat_version(0),
+                               d_channel_selector(0),
+                               d_ref_clock(0),
+                               d_bits_per_sample(0),
+                               d_header_parsed(false),
+                               d_ls3w_digital_io_enabled(digital_io_enabled)
 {
-    d_channel_selector_config = channel_selector;
-    d_header_parsed = false;
-    d_bits_per_sample = 0;
-    d_current_file_number = 0;
-    d_labsat_version = 0;
-    d_ref_clock = 0;
-    d_channel_selector = 0;
     d_signal_file_basename = std::string(signal_file_basename);
-    d_ls3w_digital_io_enabled = digital_io_enabled;
-
     std::string signal_file;
     this->set_output_multiple(8);
     signal_file = generate_filename();
@@ -114,7 +118,7 @@ std::string labsat23_source::generate_filename()
                 {
                     return d_signal_file_basename;
                 }
-            return std::string("donotexist");  // just to stop processing
+            return {"donotexist"};  // just to stop processing
         }
     if (d_signal_file_basename.substr(d_signal_file_basename.length() - 5, 5) == ".ls3w" or d_signal_file_basename.substr(d_signal_file_basename.length() - 5, 5) == ".LS3W")
         {
@@ -737,7 +741,8 @@ void labsat23_source::decode_ls3w_register(uint64_t input, std::vector<gr_comple
 {
     std::bitset<64> bs(input);
 
-    // Reverse, since register are written to file as 64-bit little endian words
+    // Earlier samples are written in the MSBs of the register. Bit-reverse the register
+    // for easier indexing. Note this bit-reverses individual samples as well for quant > 1 bit
     for (std::size_t i = 0; i < 32; ++i)
         {
             bool t = bs[i];
@@ -1074,14 +1079,20 @@ int labsat23_source::general_work(int noutput_items,
                     std::size_t output_pointer = 0;
                     for (int i = 0; i < registers_to_read; i++)
                         {
+                            uint64_t read_register = 0ULL;
+                            // Labsat3W writes its 64-bit shift register to files in little endian. Read and convert to host endianness.
+#if HAS_BOOST_ENDIAN
+                            binary_input_file.read(reinterpret_cast<char *>(&read_register), sizeof(read_register));
+                            boost::endian::little_to_native_inplace(read_register);
+#else
                             std::array<char, 8> memory_block{};
                             binary_input_file.read(memory_block.data(), 8);
-                            uint64_t read_register = 0ULL;
                             for (int k = 7; k >= 0; --k)
                                 {
                                     read_register <<= 8;
-                                    read_register |= uint64_t(memory_block[k]);
+                                    read_register |= uint64_t(memory_block[k]);  // This is buggy if the MSB of the char is set.
                                 }
+#endif
 
                             if (binary_input_file.gcount() == 8)
                                 {

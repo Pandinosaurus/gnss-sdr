@@ -26,6 +26,8 @@
 #include <gnuradio/io_signature.h>
 #include <volk/volk.h>
 #include <volk_gnsssdr/volk_gnsssdr.h>
+#include <algorithm>
+#include <array>
 #include <exception>
 #include <sstream>
 #include <utility>
@@ -57,51 +59,48 @@ pcps_cccwsr_acquisition_cc::pcps_cccwsr_acquisition_cc(
     int32_t samples_per_code,
     bool dump,
     const std::string &dump_filename,
-    bool enable_monitor_output) : gr::block("pcps_cccwsr_acquisition_cc",
-                                      gr::io_signature::make(1, 1, static_cast<int>(sizeof(gr_complex) * sampled_ms * samples_per_ms)),
-                                      gr::io_signature::make(0, 1, sizeof(Gnss_Synchro)))
+    bool enable_monitor_output)
+    : gr::block("pcps_cccwsr_acquisition_cc",
+          gr::io_signature::make(1, 1, static_cast<int>(sizeof(gr_complex) * sampled_ms * samples_per_ms)),
+          gr::io_signature::make(0, 1, sizeof(Gnss_Synchro))),
+      d_dump_filename(dump_filename),
+      d_gnss_synchro(nullptr),
+      d_fs_in(fs_in),
+      d_sample_counter(0ULL),
+      d_threshold(0),
+      d_doppler_freq(0),
+      d_mag(0),
+      d_input_power(0.0),
+      d_test_statistics(0),
+      d_state(0),
+      d_samples_per_ms(samples_per_ms),
+      d_samples_per_code(samples_per_code),
+      d_doppler_resolution(0),
+      d_doppler_max(doppler_max),
+      d_doppler_step(0),
+      d_sampled_ms(sampled_ms),
+      d_max_dwells(max_dwells),
+      d_well_count(0),
+      d_fft_size(d_sampled_ms * d_samples_per_ms),
+      d_num_doppler_bins(0),
+      d_code_phase(0),
+      d_channel(0),
+      d_active(false),
+      d_dump(dump),
+      d_enable_monitor_output(enable_monitor_output)
 {
     this->message_port_register_out(pmt::mp("events"));
-    d_sample_counter = 0ULL;  // SAMPLE COUNTER
-    d_active = false;
-    d_state = 0;
-    d_fs_in = fs_in;
-    d_samples_per_ms = samples_per_ms;
-    d_samples_per_code = samples_per_code;
-    d_sampled_ms = sampled_ms;
-    d_max_dwells = max_dwells;
-    d_well_count = 0;
-    d_doppler_max = doppler_max;
-    d_fft_size = d_sampled_ms * d_samples_per_ms;
-    d_mag = 0;
-    d_input_power = 0.0;
-    d_num_doppler_bins = 0;
 
-    d_fft_code_data.reserve(d_fft_size);
-    d_fft_code_pilot.reserve(d_fft_size);
-    d_data_correlation.reserve(d_fft_size);
-    d_pilot_correlation.reserve(d_fft_size);
-    d_correlation_plus.reserve(d_fft_size);
-    d_correlation_minus.reserve(d_fft_size);
-    d_magnitude.reserve(d_fft_size);
+    d_fft_code_data = std::vector<gr_complex>(d_fft_size);
+    d_fft_code_pilot = std::vector<gr_complex>(d_fft_size);
+    d_data_correlation = std::vector<gr_complex>(d_fft_size);
+    d_pilot_correlation = std::vector<gr_complex>(d_fft_size);
+    d_correlation_plus = std::vector<gr_complex>(d_fft_size);
+    d_correlation_minus = std::vector<gr_complex>(d_fft_size);
+    d_magnitude = std::vector<float>(d_fft_size);
 
     d_fft_if = gnss_fft_fwd_make_unique(d_fft_size);
     d_ifft = gnss_fft_rev_make_unique(d_fft_size);
-
-    // For dumping samples into a file
-    d_dump = dump;
-    d_dump_filename = dump_filename;
-
-    d_enable_monitor_output = enable_monitor_output;
-
-    d_doppler_resolution = 0;
-    d_threshold = 0;
-    d_doppler_step = 0;
-    d_gnss_synchro = nullptr;
-    d_code_phase = 0;
-    d_doppler_freq = 0;
-    d_test_statistics = 0;
-    d_channel = 0;
 }
 
 
@@ -129,7 +128,7 @@ void pcps_cccwsr_acquisition_cc::set_local_code(std::complex<float> *code_data,
     std::complex<float> *code_pilot)
 {
     // Data code (E1B)
-    memcpy(d_fft_if->get_inbuf(), code_data, sizeof(gr_complex) * d_fft_size);
+    std::copy(code_data, code_data + d_fft_size, d_fft_if->get_inbuf());
 
     d_fft_if->execute();  // We need the FFT of local code
 
@@ -137,7 +136,7 @@ void pcps_cccwsr_acquisition_cc::set_local_code(std::complex<float> *code_data,
     volk_32fc_conjugate_32fc(d_fft_code_data.data(), d_fft_if->get_outbuf(), d_fft_size);
 
     // Pilot code (E1C)
-    memcpy(d_fft_if->get_inbuf(), code_pilot, sizeof(gr_complex) * d_fft_size);
+    std::copy(code_pilot, code_pilot + d_fft_size, d_fft_if->get_inbuf());
 
     d_fft_if->execute();  // We need the FFT of local code
 
@@ -229,7 +228,7 @@ int pcps_cccwsr_acquisition_cc::general_work(int noutput_items,
                         d_state = 1;
                     }
 
-                d_sample_counter += static_cast<uint64_t>(d_fft_size * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_fft_size) * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 break;
@@ -287,7 +286,7 @@ int pcps_cccwsr_acquisition_cc::general_work(int noutput_items,
 
                         // Copy the result of the correlation between wiped--off signal and data code in
                         // d_data_correlation.
-                        memcpy(d_data_correlation.data(), d_ifft->get_outbuf(), sizeof(gr_complex) * d_fft_size);
+                        std::copy(d_ifft->get_outbuf(), d_ifft->get_outbuf() + d_fft_size, d_data_correlation.data());
 
                         // Multiply carrier wiped--off, Fourier transformed incoming signal
                         // with the local FFT'd pilot code reference (E1C) using SIMD operations
@@ -300,7 +299,7 @@ int pcps_cccwsr_acquisition_cc::general_work(int noutput_items,
 
                         // Copy the result of the correlation between wiped--off signal and pilot code in
                         // d_data_correlation.
-                        memcpy(d_pilot_correlation.data(), d_ifft->get_outbuf(), sizeof(gr_complex) * d_fft_size);
+                        std::copy(d_ifft->get_outbuf(), d_ifft->get_outbuf() + d_fft_size, d_pilot_correlation.data());
 
                         for (uint32_t i = 0; i < d_fft_size; i++)
                             {
@@ -392,7 +391,7 @@ int pcps_cccwsr_acquisition_cc::general_work(int noutput_items,
                 d_active = false;
                 d_state = 0;
 
-                d_sample_counter += static_cast<uint64_t>(d_fft_size * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_fft_size) * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 acquisition_message = 1;
@@ -404,7 +403,7 @@ int pcps_cccwsr_acquisition_cc::general_work(int noutput_items,
                         auto **out = reinterpret_cast<Gnss_Synchro **>(&output_items[0]);
                         Gnss_Synchro current_synchro_data = Gnss_Synchro();
                         current_synchro_data = *d_gnss_synchro;
-                        *out[0] = current_synchro_data;
+                        *out[0] = std::move(current_synchro_data);
                         noutput_items = 1;  // Number of Gnss_Synchro objects produced
                     }
 
@@ -427,7 +426,7 @@ int pcps_cccwsr_acquisition_cc::general_work(int noutput_items,
                 d_active = false;
                 d_state = 0;
 
-                d_sample_counter += static_cast<uint64_t>(d_fft_size * ninput_items[0]);  // sample counter
+                d_sample_counter += static_cast<uint64_t>(d_fft_size) * ninput_items[0];  // sample counter
                 consume_each(ninput_items[0]);
 
                 acquisition_message = 2;

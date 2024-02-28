@@ -46,12 +46,11 @@ target_link_libraries(input_filter_gr_blocks
         algorithms_libs
     PRIVATE
         Volk::volk
-        Log4cpp::log4cpp
 )
 
 target_include_directories(input_filter_gr_blocks
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/core/interfaces
+        ${GNSSSDR_SOURCE_DIR}/src/core/interfaces
 )
 
 if(GNURADIO_USES_STD_POINTERS)

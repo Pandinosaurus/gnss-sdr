@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -76,35 +77,56 @@ Glonass_L1_Ca_Dll_Pll_Tracking_cc::Glonass_L1_Ca_Dll_Pll_Tracking_cc(
     const std::string &dump_filename,
     float pll_bw_hz,
     float dll_bw_hz,
-    float early_late_space_chips) : gr::block("Glonass_L1_Ca_Dll_Pll_Tracking_cc", gr::io_signature::make(1, 1, sizeof(gr_complex)),
-                                        gr::io_signature::make(1, 1, sizeof(Gnss_Synchro)))
+    float early_late_space_chips)
+    : gr::block("Glonass_L1_Ca_Dll_Pll_Tracking_cc", gr::io_signature::make(1, 1, sizeof(gr_complex)),
+          gr::io_signature::make(1, 1, sizeof(Gnss_Synchro))),
+      d_acquisition_gnss_synchro(nullptr),
+      d_dump_filename(dump_filename),
+      d_fs_in(fs_in),
+      d_glonass_freq_ch(0),
+      d_early_late_spc_chips(early_late_space_chips),
+      d_vector_length(vector_length),
+      d_channel(0),
+      d_rem_code_phase_samples(0.0),
+      d_rem_code_phase_chips(0.0),
+      d_rem_carr_phase_rad(0.0),
+      d_acq_code_phase_samples(0.0),
+      d_acq_carrier_doppler_hz(0.0),
+      d_code_freq_chips(GLONASS_L1_CA_CODE_RATE_CPS),
+      d_code_phase_step_chips(0.0),
+      d_carrier_doppler_hz(0.0),
+      d_carrier_doppler_phase_step_rad(0.0),
+      d_carrier_frequency_hz(0.0),
+      d_carrier_phase_step_rad(0.0),
+      d_acc_carrier_phase_rad(0.0),
+      d_code_phase_samples(0.0),
+      d_n_correlator_taps(3),
+      d_current_prn_length_samples(static_cast<int32_t>(d_vector_length)),
+      d_sample_counter(0ULL),
+      d_acq_sample_stamp(0),
+      d_carrier_lock_test(1),
+      d_CN0_SNV_dB_Hz(0),
+      d_carrier_lock_threshold(FLAGS_carrier_lock_th),
+      d_carrier_lock_fail_counter(0),
+      d_cn0_estimation_counter(0),
+      d_enable_tracking(false),
+      d_pull_in(false),
+      d_acc_carrier_phase_initialized(false),
+      d_dump(dump)
 {
     this->message_port_register_out(pmt::mp("events"));
     this->message_port_register_in(pmt::mp("telemetry_to_trk"));
-    // initialize internal vars
-    d_dump = dump;
-    d_fs_in = fs_in;
-    d_vector_length = vector_length;
-    d_dump_filename = dump_filename;
 
-    d_current_prn_length_samples = static_cast<int32_t>(d_vector_length);
-
-    // Initialize tracking  ==========================================
     d_code_loop_filter.set_DLL_BW(dll_bw_hz);
     d_carrier_loop_filter.set_PLL_BW(pll_bw_hz);
 
-    // --- DLL variables -------------------------------------------------------
-    d_early_late_spc_chips = early_late_space_chips;  // Define early-late offset (in chips)
-
     // Initialization of local code replica
     // Get space for a vector with the C/A code replica sampled 1x/chip
-    d_ca_code.resize(static_cast<int32_t>(GLONASS_L1_CA_CODE_LENGTH_CHIPS), gr_complex(0.0, 0.0));
+    d_ca_code = volk_gnsssdr::vector<gr_complex>(static_cast<size_t>(GLONASS_L1_CA_CODE_LENGTH_CHIPS));
 
-    // correlator outputs (scalar)
-    d_n_correlator_taps = 3;  // Early, Prompt, and Late
-    d_correlator_outs.resize(d_n_correlator_taps, gr_complex(0.0, 0.0));
+    d_correlator_outs = volk_gnsssdr::vector<gr_complex>(d_n_correlator_taps);
 
-    d_local_code_shift_chips.reserve(d_n_correlator_taps);
+    d_local_code_shift_chips = volk_gnsssdr::vector<float>(d_n_correlator_taps);
     // Set TAPs delay values [chips]
     d_local_code_shift_chips[0] = -d_early_late_spc_chips;
     d_local_code_shift_chips[1] = 0.0;
@@ -112,49 +134,14 @@ Glonass_L1_Ca_Dll_Pll_Tracking_cc::Glonass_L1_Ca_Dll_Pll_Tracking_cc(
 
     multicorrelator_cpu.init(2 * d_current_prn_length_samples, d_n_correlator_taps);
 
-    // --- Perform initializations ------------------------------
-    // define initial code frequency basis of NCO
-    d_code_freq_chips = GLONASS_L1_CA_CODE_RATE_CPS;
-    // define residual code phase (in chips)
-    d_rem_code_phase_samples = 0.0;
-    // define residual carrier phase
-    d_rem_carr_phase_rad = 0.0;
-
-    // sample synchronization
-    d_sample_counter = 0ULL;
-    // d_sample_counter_seconds = 0;
-    d_acq_sample_stamp = 0;
-
-    d_enable_tracking = false;
-    d_pull_in = false;
-
-    // CN0 estimation and lock detector buffers
-    d_cn0_estimation_counter = 0;
-    d_Prompt_buffer.reserve(FLAGS_cn0_samples);
-    d_carrier_lock_test = 1;
-    d_CN0_SNV_dB_Hz = 0;
-    d_carrier_lock_fail_counter = 0;
-    d_carrier_lock_threshold = FLAGS_carrier_lock_th;
+    d_Prompt_buffer = volk_gnsssdr::vector<gr_complex>(FLAGS_cn0_samples);
 
     systemName["R"] = std::string("Glonass");
-
-    d_acquisition_gnss_synchro = nullptr;
-    d_channel = 0;
-    d_acq_code_phase_samples = 0.0;
-    d_acq_carrier_doppler_hz = 0.0;
-    d_carrier_doppler_hz = 0.0;
-    d_carrier_doppler_phase_step_rad = 0.0;
-    d_carrier_frequency_hz = 0.0;
-    d_acc_carrier_phase_rad = 0.0;
-    d_code_phase_samples = 0.0;
-    d_rem_code_phase_chips = 0.0;
-    d_code_phase_step_chips = 0.0;
-    d_carrier_phase_step_rad = 0.0;
-
-    d_glonass_freq_ch = 0;
-
-    d_acc_carrier_phase_initialized = false;
-    set_relative_rate(1.0 / static_cast<double>(d_vector_length));
+#if GNURADIO_GREATER_THAN_38
+    this->set_relative_rate(1, static_cast<uint64_t>(d_vector_length));
+#else
+    this->set_relative_rate(1.0 / static_cast<double>(d_vector_length));
+#endif
 }
 
 
@@ -221,8 +208,7 @@ void Glonass_L1_Ca_Dll_Pll_Tracking_cc::start_tracking()
 
     d_code_phase_samples = d_acq_code_phase_samples;
 
-    const std::string sys_ = &d_acquisition_gnss_synchro->System;
-    sys = sys_.substr(0, 1);
+    sys = std::string(1, d_acquisition_gnss_synchro->System);
     d_acc_carrier_phase_initialized = false;
 
     // DEBUG OUTPUT
@@ -467,11 +453,11 @@ void Glonass_L1_Ca_Dll_Pll_Tracking_cc::set_channel(uint32_t channel)
                         {
                             d_dump_filename.append(std::to_string(d_channel));
                             d_dump_filename.append(".dat");
-                            d_dump_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+                            d_dump_file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
                             d_dump_file.open(d_dump_filename.c_str(), std::ios::out | std::ios::binary);
                             LOG(INFO) << "Tracking dump enabled on channel " << d_channel << " Log file: " << d_dump_filename.c_str();
                         }
-                    catch (const std::ifstream::failure &e)
+                    catch (const std::ofstream::failure &e)
                         {
                             LOG(WARNING) << "channel " << d_channel << " Exception opening trk dump file " << e.what();
                         }
@@ -532,7 +518,7 @@ int Glonass_L1_Ca_Dll_Pll_Tracking_cc::general_work(int noutput_items __attribut
                     current_synchro_data.Carrier_Doppler_hz = d_carrier_doppler_hz;
                     current_synchro_data.fs = d_fs_in;
                     current_synchro_data.correlation_length_ms = 1;
-                    *out[0] = current_synchro_data;
+                    *out[0] = std::move(current_synchro_data);
                     consume_each(samples_offset);  // shift input to perform alignment with local replica
                     return 1;
                 }
@@ -651,7 +637,7 @@ int Glonass_L1_Ca_Dll_Pll_Tracking_cc::general_work(int noutput_items __attribut
 
     // assign the GNU Radio block output data
     current_synchro_data.fs = d_fs_in;
-    *out[0] = current_synchro_data;
+    *out[0] = std::move(current_synchro_data);
     if (d_dump)
         {
             // MULTIPLEXED FILE RECORDING - Record results to file
@@ -713,7 +699,7 @@ int Glonass_L1_Ca_Dll_Pll_Tracking_cc::general_work(int noutput_items __attribut
                     uint32_t prn_ = d_acquisition_gnss_synchro->PRN;
                     d_dump_file.write(reinterpret_cast<char *>(&prn_), sizeof(uint32_t));
                 }
-            catch (const std::ifstream::failure &e)
+            catch (const std::ofstream::failure &e)
                 {
                     LOG(WARNING) << "Exception writing trk dump file " << e.what();
                 }

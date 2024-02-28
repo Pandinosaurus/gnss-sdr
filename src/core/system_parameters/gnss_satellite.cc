@@ -30,10 +30,10 @@ Gnss_Satellite::Gnss_Satellite(const std::string& system_, uint32_t PRN_)
 
 void Gnss_Satellite::reset()
 {
-    PRN = 0;
-    system = std::string("");
-    block = std::string("");
-    rf_link = 0;
+    this->system.clear();
+    this->block.clear();
+    this->PRN = 0;
+    this->rf_link = 0;
 }
 
 
@@ -43,11 +43,11 @@ std::ostream& operator<<(std::ostream& out, const Gnss_Satellite& sat)  // outpu
     std::string tag2;
     if (sat.get_system() == "Galileo")
         {
-            tag = "E";
+            tag = std::string("E");
         }
     if (sat.get_PRN() < 10)
         {
-            tag2 = "0";
+            tag2 = std::string("0");
         }
     out << sat.get_system() << " PRN " << tag << tag2 << sat.get_PRN() << " (Block " << sat.get_block() << ")";
     return out;
@@ -73,20 +73,23 @@ bool operator==(const Gnss_Satellite& sat1, const Gnss_Satellite& sat2)
 
 // Copy constructor
 Gnss_Satellite::Gnss_Satellite(const Gnss_Satellite& other) noexcept
+    : system(other.system),
+      block(other.block),
+      PRN(other.PRN),
+      rf_link(other.rf_link)
 {
-    *this = other;
 }
 
 
 // Copy assignment operator
-Gnss_Satellite& Gnss_Satellite::operator=(const Gnss_Satellite& rhs)
+Gnss_Satellite& Gnss_Satellite::operator=(const Gnss_Satellite& rhs) noexcept
 {
     // Only do assignment if RHS is a different object from this.
     if (this != &rhs)
         {
             this->system = rhs.system;
-            this->PRN = rhs.PRN;
             this->block = rhs.block;
+            this->PRN = rhs.PRN;
             this->rf_link = rhs.rf_link;
         }
     return *this;
@@ -95,8 +98,15 @@ Gnss_Satellite& Gnss_Satellite::operator=(const Gnss_Satellite& rhs)
 
 // Move constructor
 Gnss_Satellite::Gnss_Satellite(Gnss_Satellite&& other) noexcept
+    : system(std::move(other.system)),
+      block(std::move(other.block)),
+      PRN(other.PRN),
+      rf_link(other.rf_link)
 {
-    *this = std::move(other);
+    other.system.clear();
+    other.block.clear();
+    other.PRN = 0;
+    other.rf_link = 0;
 }
 
 
@@ -105,10 +115,14 @@ Gnss_Satellite& Gnss_Satellite::operator=(Gnss_Satellite&& other) noexcept
 {
     if (this != &other)
         {
-            this->system = other.get_system();
-            this->PRN = other.get_PRN();
-            this->block = other.get_block();
-            this->rf_link = other.get_rf_link();
+            system = std::move(other.system);
+            block = std::move(other.block);
+            PRN = other.PRN;
+            rf_link = other.rf_link;
+            other.system.clear();
+            other.block.clear();
+            other.PRN = 0;
+            other.rf_link = 0;
         }
     return *this;
 }
@@ -525,7 +539,7 @@ std::string Gnss_Satellite::what_block(const std::string& system_, uint32_t PRN_
         }
     if (system_ == "Galileo")
         {
-            // Check https://en.wikipedia.org/wiki/List_of_Galileo_satellites and https://www.gsc-europa.eu/system-status/Constellation-Information
+            // Check https://en.wikipedia.org/wiki/List_of_Galileo_satellites and https://www.gsc-europa.eu/system-service-status/constellation-information
             switch (PRN_)
                 {
                 case 1:
@@ -551,6 +565,9 @@ std::string Gnss_Satellite::what_block(const std::string& system_, uint32_t PRN_
                     break;
                 case 9:
                     block_ = std::string("FOC-FM9");  // Galileo Full Operational Capability (FOC) satellite FM9 / GSAT0209, launched on December 17, 2015.
+                    break;
+                case 10:
+                    block_ = std::string("FOC-FM24");  // Galileo Full Operational Capability (FOC) satellite FM24 / GSAT0224, launched on December 5, 2021.
                     break;
                 case 11:
                     block_ = std::string("IOV-PFM");  // PFM, the ProtoFlight Model / GSAT0101, launched from French Guiana at 10:30 GMT on October 21, 2011.
@@ -603,11 +620,14 @@ std::string Gnss_Satellite::what_block(const std::string& system_, uint32_t PRN_
                 case 33:
                     block_ = std::string("FOC-FM22");  // Galileo Full Operational Capability (FOC) satellite FM22 / GSAT0222, launched on Jul. 25, 2018. UNDER COMMISSIONING.
                     break;
+                case 34:
+                    block_ = std::string("FOC-FM23");  // Galileo Full Operational Capability (FOC) satellite FM23 / GSAT0223, launched on December 5, 2021.
+                    break;
                 case 36:
                     block_ = std::string("FOC-FM19");  // Galileo Full Operational Capability (FOC) satellite FM19 / GSAT0219, launched on Jul. 25, 2018. UNDER COMMISSIONING.
                     break;
                 default:
-                    block_ = std::string("Unknown(Simulated)");
+                    block_ = std::string("Unknown");
                 }
         }
     if (system_ == "Beidou")
@@ -754,7 +774,7 @@ std::string Gnss_Satellite::what_block(const std::string& system_, uint32_t PRN_
                     block_ = std::string("BeiDou-3 GEOG3");  // launched 2020/06/2023
                     break;
                 default:
-                    block_ = std::string("Unknown(Simulated)");
+                    block_ = std::string("Unknown");
                 }
         }
     return block_;

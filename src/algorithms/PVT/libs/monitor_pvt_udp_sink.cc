@@ -21,7 +21,10 @@
 #include <sstream>
 
 
-Monitor_Pvt_Udp_Sink::Monitor_Pvt_Udp_Sink(const std::vector<std::string>& addresses, const uint16_t& port, bool protobuf_enabled) : socket{io_context}
+Monitor_Pvt_Udp_Sink::Monitor_Pvt_Udp_Sink(const std::vector<std::string>& addresses,
+    const uint16_t& port,
+    bool protobuf_enabled) : socket{io_context},
+                             use_protobuf(protobuf_enabled)
 {
     for (const auto& address : addresses)
         {
@@ -29,7 +32,6 @@ Monitor_Pvt_Udp_Sink::Monitor_Pvt_Udp_Sink(const std::vector<std::string>& addre
             endpoints.push_back(endpoint);
         }
 
-    use_protobuf = protobuf_enabled;
     if (use_protobuf)
         {
             serdes = Serdes_Monitor_Pvt();
@@ -55,11 +57,10 @@ bool Monitor_Pvt_Udp_Sink::write_monitor_pvt(const Monitor_Pvt* const monitor_pv
     for (const auto& endpoint : endpoints)
         {
             socket.open(endpoint.protocol(), error);
-            socket.connect(endpoint, error);
 
             try
                 {
-                    if (socket.send(boost::asio::buffer(outbound_data)) == 0)
+                    if (socket.send_to(boost::asio::buffer(outbound_data), endpoint) == 0)
                         {
                             return false;
                         }

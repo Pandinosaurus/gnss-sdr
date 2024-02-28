@@ -8,8 +8,8 @@
 set(OPT_SIGNAL_SOURCE_LIB_SOURCES "")
 set(OPT_SIGNAL_SOURCE_LIB_HEADERS "")
 if(ENABLE_FMCOMMS2 OR ENABLE_AD9361)
-    set(OPT_SIGNAL_SOURCE_LIB_SOURCES ad9361_manager.cc)
-    set(OPT_SIGNAL_SOURCE_LIB_HEADERS ad9361_manager.h)
+    set(OPT_SIGNAL_SOURCE_LIB_SOURCES ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ad9361_manager.cc)
+    set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ad9361_manager.h)
 endif()
 
 if(ENABLE_FPGA OR ENABLE_AD9361)
@@ -19,12 +19,27 @@ if(ENABLE_FPGA OR ENABLE_AD9361)
     set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_HEADERS} fpga_dynamic_bit_selection.h)
     set(OPT_SIGNAL_SOURCE_LIB_SOURCES ${OPT_SIGNAL_SOURCE_LIB_SOURCES} fpga_buffer_monitor.cc)
     set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_HEADERS} fpga_buffer_monitor.h)
+    set(OPT_SIGNAL_SOURCE_LIB_SOURCES ${OPT_SIGNAL_SOURCE_LIB_SOURCES} fpga_dma-proxy.cc)
+    set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_HEADERS} fpga_dma-proxy.h)
 endif()
+
+
+if(ENABLE_PLUTOSDR)
+    set(OPT_SIGNAL_SOURCE_LIB_SOURCES ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ad936x_iio_samples.cc)
+    set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ad936x_iio_samples.h)
+    set(OPT_SIGNAL_SOURCE_LIB_SOURCES ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ad936x_iio_custom.cc)
+    set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ad936x_iio_custom.h)
+    set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_SOURCES} pps_samplestamp.h)
+    set(OPT_SIGNAL_SOURCE_LIB_SOURCES ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ppstcprx.cc)
+    set(OPT_SIGNAL_SOURCE_LIB_HEADERS ${OPT_SIGNAL_SOURCE_LIB_SOURCES} ppstcprx.h)
+endif()
+
 
 set(SIGNAL_SOURCE_LIB_SOURCES
     rtl_tcp_commands.cc
     rtl_tcp_dongle_info.cc
     gnss_sdr_valve.cc
+    gnss_sdr_timestamp.cc
     ${OPT_SIGNAL_SOURCE_LIB_SOURCES}
 )
 
@@ -66,8 +81,9 @@ target_link_libraries(signal_source_libs
 
 target_include_directories(signal_source_libs
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/src/core/receiver
-        ${CMAKE_SOURCE_DIR}/src/core/interfaces
+        ${GNSSSDR_SOURCE_DIR}/src/core/receiver
+        ${GNSSSDR_SOURCE_DIR}/src/core/interfaces
+        ${GNSSSDR_SOURCE_DIR}/src/algorithms/libs
 )
 
 if(GNURADIO_USES_STD_POINTERS)
@@ -76,7 +92,7 @@ if(GNURADIO_USES_STD_POINTERS)
     )
 endif()
 
-if(ENABLE_FMCOMMS2 OR ENABLE_AD9361)
+if(ENABLE_FMCOMMS2 OR ENABLE_AD9361 OR ENABLE_PLUTOSDR)
     target_link_libraries(signal_source_libs
         PUBLIC
             Iio::iio

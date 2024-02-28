@@ -28,27 +28,32 @@ GalileoE1PcpsCccwsrAmbiguousAcquisition::GalileoE1PcpsCccwsrAmbiguousAcquisition
     const ConfigurationInterface* configuration,
     const std::string& role,
     unsigned int in_streams,
-    unsigned int out_streams) : role_(role),
-                                in_streams_(in_streams),
-                                out_streams_(out_streams)
+    unsigned int out_streams)
+    : configuration_(configuration),
+      role_(role),
+      gnss_synchro_(nullptr),
+      item_size_(sizeof(gr_complex)),
+      threshold_(0.0),
+      channel_(0),
+      doppler_max_(configuration_->property(role + ".doppler_max", 5000)),
+      doppler_step_(0),
+      sampled_ms_(configuration_->property(role + ".coherent_integration_time_ms", 4)),
+      max_dwells_(configuration_->property(role + ".max_dwells", 1)),
+      in_streams_(in_streams),
+      out_streams_(out_streams),
+      dump_(configuration_->property(role + ".dump", false))
 {
-    configuration_ = configuration;
     const std::string default_item_type("gr_complex");
     const std::string default_dump_filename("../data/acquisition.dat");
-
-    DLOG(INFO) << "role " << role;
-
-    item_type_ = configuration_->property(role + ".item_type", default_item_type);
-
+    item_type_ = configuration_->property(role_ + ".item_type", default_item_type);
     int64_t fs_in_deprecated = configuration_->property("GNSS-SDR.internal_fs_hz", 4000000);
     fs_in_ = configuration_->property("GNSS-SDR.internal_fs_sps", fs_in_deprecated);
-    dump_ = configuration_->property(role + ".dump", false);
-    doppler_max_ = configuration_->property(role + ".doppler_max", 5000);
+    dump_filename_ = configuration_->property(role_ + ".dump_filename", default_dump_filename);
+
     if (FLAGS_doppler_max != 0)
         {
             doppler_max_ = FLAGS_doppler_max;
         }
-    sampled_ms_ = configuration_->property(role + ".coherent_integration_time_ms", 4);
 
     if (sampled_ms_ % 4 != 0)
         {
@@ -58,13 +63,7 @@ GalileoE1PcpsCccwsrAmbiguousAcquisition::GalileoE1PcpsCccwsrAmbiguousAcquisition
                          << sampled_ms_ << " ms will be used.";
         }
 
-    max_dwells_ = configuration_->property(role + ".max_dwells", 1);
-
-    dump_filename_ = configuration_->property(role + ".dump_filename",
-        default_dump_filename);
-
     // -- Find number of samples per spreading code (4 ms)  -----------------
-
     code_length_ = static_cast<unsigned int>(round(
         fs_in_ / (GALILEO_E1_CODE_CHIP_RATE_CPS / GALILEO_E1_B_CODE_LENGTH_CHIPS)));
 
@@ -77,9 +76,9 @@ GalileoE1PcpsCccwsrAmbiguousAcquisition::GalileoE1PcpsCccwsrAmbiguousAcquisition
 
     bool enable_monitor_output = configuration_->property("AcquisitionMonitor.enable_monitor", false);
 
+    DLOG(INFO) << "role " << role_;
     if (item_type_ == "gr_complex")
         {
-            item_size_ = sizeof(gr_complex);
             acquisition_cc_ = pcps_cccwsr_make_acquisition_cc(sampled_ms_, max_dwells_,
                 doppler_max_, fs_in_, samples_per_ms, code_length_,
                 dump_, dump_filename_, enable_monitor_output);
@@ -91,14 +90,10 @@ GalileoE1PcpsCccwsrAmbiguousAcquisition::GalileoE1PcpsCccwsrAmbiguousAcquisition
         }
     else
         {
-            item_size_ = sizeof(gr_complex);
+            item_size_ = 0;
+            acquisition_cc_ = nullptr;
             LOG(WARNING) << item_type_ << " unknown acquisition item type";
         }
-
-    channel_ = 0;
-    threshold_ = 0.0;
-    doppler_step_ = 0;
-    gnss_synchro_ = nullptr;
 
     if (in_streams_ > 1)
         {

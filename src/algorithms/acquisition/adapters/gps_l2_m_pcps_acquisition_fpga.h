@@ -11,7 +11,7 @@
  * GNSS-SDR is a Global Navigation Satellite System software-defined receiver.
  * This file is part of GNSS-SDR.
  *
- * Copyright (C) 2010-2020  (see AUTHORS file for a list of contributors)
+ * Copyright (C) 2010-2022  (see AUTHORS file for a list of contributors)
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * -----------------------------------------------------------------------------
@@ -20,13 +20,16 @@
 #ifndef GNSS_SDR_GPS_L2_M_PCPS_ACQUISITION_FPGA_H
 #define GNSS_SDR_GPS_L2_M_PCPS_ACQUISITION_FPGA_H
 
+#include "acq_conf_fpga.h"
 #include "channel_fsm.h"
+#include "gnss_synchro.h"
 #include "pcps_acquisition_fpga.h"
 #include <gnuradio/runtime_types.h>  // for basic_block_sptr, top_block_sptr
-#include <cstddef>                   // for size_t
-#include <memory>                    // for weak_ptr
-#include <string>                    // for string
-#include <vector>
+#include <volk_gnsssdr/volk_gnsssdr_alloc.h>
+#include <cstddef>  // for size_t
+#include <memory>   // for weak_ptr
+#include <string>   // for string
+#include <utility>
 
 /** \addtogroup Acquisition
  * \{ */
@@ -34,7 +37,6 @@
  * \{ */
 
 
-class Gnss_Synchro;
 class ConfigurationInterface;
 
 /*!
@@ -96,8 +98,8 @@ public:
      */
     inline void set_channel_fsm(std::weak_ptr<ChannelFsm> channel_fsm) override
     {
-        channel_fsm_ = channel_fsm;
-        acquisition_fpga_->set_channel_fsm(channel_fsm);
+        channel_fsm_ = std::move(channel_fsm);
+        acquisition_fpga_->set_channel_fsm(channel_fsm_);
     }
 
     /*!
@@ -148,7 +150,9 @@ public:
     void set_resampler_latency(uint32_t latency_samples __attribute__((unused))) override{};
 
 private:
-    const std::string acquisition_device_name = "acquisition_S00_AXI";  // UIO device name
+    static const uint32_t downsampling_factor_default = 1;
+    static const uint32_t fpga_buff_num = 0;  // L2 band
+    static const uint32_t fpga_blk_exp = 13;  // default block exponent
 
     static const uint32_t NUM_PRNs = 32;
     static const uint32_t QUANT_BITS_LOCAL_CODE = 16;
@@ -158,11 +162,10 @@ private:
     static const uint32_t SHL_CODE_BITS = 65536;              // shift left by 10 bits
 
     pcps_acquisition_fpga_sptr acquisition_fpga_;
-    std::vector<uint32_t> d_all_fft_codes_;  // memory that contains all the code ffts
+    volk_gnsssdr::vector<uint32_t> d_all_fft_codes_;  // memory that contains all the code ffts
     std::weak_ptr<ChannelFsm> channel_fsm_;
     Gnss_Synchro* gnss_synchro_;
-    std::string item_type_;
-    std::string dump_filename_;
+    Acq_Conf_Fpga acq_parameters_;
     std::string role_;
     int64_t fs_in_;
     float threshold_;

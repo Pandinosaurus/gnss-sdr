@@ -20,10 +20,10 @@
 #include "configuration_interface.h"
 #include "gnss_sdr_string_literals.h"
 #include "gnss_sdr_valve.h"
+#include <boost/exception/diagnostic_information.hpp>
 #include <glog/logging.h>
 #include <gnuradio/blocks/file_sink.h>
 #include <iostream>
-#include <utility>
 
 
 using namespace std::string_literals;
@@ -32,28 +32,23 @@ using namespace std::string_literals;
 OsmosdrSignalSource::OsmosdrSignalSource(const ConfigurationInterface* configuration,
     const std::string& role, unsigned int in_stream, unsigned int out_stream,
     Concurrent_Queue<pmt::pmt_t>* queue)
-    : SignalSourceBase(configuration, role, "Osmosdr_Signal_Source"s), in_stream_(in_stream), out_stream_(out_stream)
+    : SignalSourceBase(configuration, role, "Osmosdr_Signal_Source"s),
+      item_type_(configuration->property(role + ".item_type", std::string("gr_complex"))),
+      dump_filename_(configuration->property(role + ".dump_filename", std::string("./data/signal_source.dat"))),
+      osmosdr_args_(configuration->property(role + ".osmosdr_args", std::string())),
+      antenna_(configuration->property(role + ".antenna", std::string())),
+      sample_rate_(configuration->property(role + ".sampling_frequency", 2.0e6)),
+      freq_(configuration->property(role + ".freq", GPS_L1_FREQ_HZ)),
+      gain_(configuration->property(role + ".gain", 40.0)),
+      if_gain_(configuration->property(role + ".if_gain", 40.0)),
+      rf_gain_(configuration->property(role + ".rf_gain", 40.0)),
+      if_bw_(configuration->property(role + ".if_bw", 0.0)),
+      samples_(configuration->property(role + ".samples", static_cast<int64_t>(0))),
+      in_stream_(in_stream),
+      out_stream_(out_stream),
+      AGC_enabled_(configuration->property(role + ".AGC_enabled", true)),
+      dump_(configuration->property(role + ".dump", false))
 {
-    // DUMP PARAMETERS
-    const std::string empty;
-    const std::string default_dump_file("./data/signal_source.dat");
-    const std::string default_item_type("gr_complex");
-    samples_ = configuration->property(role + ".samples", static_cast<int64_t>(0));
-    dump_ = configuration->property(role + ".dump", false);
-    dump_filename_ = configuration->property(role + ".dump_filename",
-        default_dump_file);
-
-    // OSMOSDR Driver parameters
-    AGC_enabled_ = configuration->property(role + ".AGC_enabled", true);
-    freq_ = configuration->property(role + ".freq", GPS_L1_FREQ_HZ);
-    gain_ = configuration->property(role + ".gain", 40.0);
-    rf_gain_ = configuration->property(role + ".rf_gain", 40.0);
-    if_gain_ = configuration->property(role + ".if_gain", 40.0);
-    sample_rate_ = configuration->property(role + ".sampling_frequency", 2.0e6);
-    item_type_ = configuration->property(role + ".item_type", default_item_type);
-    osmosdr_args_ = configuration->property(role + ".osmosdr_args", std::string());
-    antenna_ = configuration->property(role + ".antenna", empty);
-
     if (item_type_ == "short")
         {
             item_size_ = sizeof(int16_t);
@@ -107,9 +102,27 @@ OsmosdrSignalSource::OsmosdrSignalSource(const ConfigurationInterface* configura
                         }
                     else
                         {
-                            std::cout << "Actual RX Gain: " << osmosdr_source_->get_gain() << " dB...\n";
-                            LOG(INFO) << "Actual RX Gain: " << osmosdr_source_->get_gain() << " dB...";
+                            if (!osmosdr_args_.empty() && (osmosdr_args_.find("xtrx") != std::string::npos))
+                                {
+                                    osmosdr_source_->set_gain(gain_, "LNA", 0);
+                                    osmosdr_source_->set_gain(rf_gain_, "TIA", 0);
+                                    osmosdr_source_->set_gain(if_gain_, "PGA", 0);
+                                    std::cout << "Actual XTRX LNA Gain: " << osmosdr_source_->get_gain("LNA", 0) << " dB...\n";
+                                    std::cout << "Actual XTRX TIA Gain: " << osmosdr_source_->get_gain("TIA", 0) << " dB...\n";
+                                    std::cout << "Actual XTRX PGA Gain: " << osmosdr_source_->get_gain("PGA", 0) << " dB...\n";
+                                }
+                            else
+                                {
+                                    std::cout << "Actual RX Gain: " << osmosdr_source_->get_gain() << " dB...\n";
+                                    LOG(INFO) << "Actual RX Gain: " << osmosdr_source_->get_gain() << " dB...";
+                                }
                         }
+                }
+
+            // 5. set bandwidth
+            if (if_bw_ > 0.0)
+                {
+                    osmosdr_source_->set_bandwidth(if_bw_, 0);
                 }
 
             // Get actual bandwidth
@@ -210,7 +223,7 @@ void OsmosdrSignalSource::disconnect(gr::top_block_sptr top_block)
 gr::basic_block_sptr OsmosdrSignalSource::get_left_block()
 {
     LOG(WARNING) << "Trying to get signal source left block.";
-    return gr::basic_block_sptr();
+    return {};
 }
 
 

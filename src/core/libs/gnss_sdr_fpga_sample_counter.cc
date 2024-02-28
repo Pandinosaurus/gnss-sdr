@@ -46,30 +46,31 @@
 
 gnss_sdr_fpga_sample_counter::gnss_sdr_fpga_sample_counter(
     double _fs,
-    int32_t _interval_ms) : gr::block("fpga_fpga_sample_counter",
-                                gr::io_signature::make(0, 0, 0),
-                                gr::io_signature::make(1, 1, sizeof(Gnss_Synchro)))
+    int32_t _interval_ms)
+    : gr::block("fpga_fpga_sample_counter",
+          gr::io_signature::make(0, 0, 0),
+          gr::io_signature::make(1, 1, sizeof(Gnss_Synchro))),
+      fs(_fs),
+      sample_counter(0ULL),
+      last_sample_counter(0ULL),
+      current_T_rx_ms(0),
+      interval_ms(_interval_ms),
+      current_s(0),
+      current_m(0),
+      current_h(0),
+      current_days(0),
+      report_interval_ms(1000),     // default reporting 1 second
+      flag_enable_send_msg(false),  // enable it for reporting time with asynchronous message
+      flag_m(false),
+      flag_h(false),
+      flag_days(false),
+      is_open(true)
 {
     message_port_register_out(pmt::mp("fpga_sample_counter"));
     set_max_noutput_items(1);
-    interval_ms = _interval_ms;
-    fs = _fs;
     samples_per_output = std::round(fs * static_cast<double>(interval_ms) / 1e3);
-    open_device();
-    is_open = true;
-    sample_counter = 0ULL;
-    last_sample_counter = 0ULL;
-    current_T_rx_ms = 0;
-    current_s = 0;
-    current_m = 0;
-    current_h = 0;
-    current_days = 0;
-    report_interval_ms = 1000;  // default reporting 1 second
     samples_per_report = std::round(fs * static_cast<double>(report_interval_ms) / 1e3);
-    flag_enable_send_msg = false;  // enable it for reporting time with asynchronous message
-    flag_m = false;
-    flag_h = false;
-    flag_days = false;
+    open_device();
 }
 
 
@@ -145,7 +146,7 @@ void gnss_sdr_fpga_sample_counter::open_device()
             LOG(WARNING) << "Cannot open deviceio" << device_io_name;
             std::cout << "Counter-Intr: cannot open deviceio" << device_io_name << '\n';
         }
-    map_base = reinterpret_cast<volatile uint32_t *>(mmap(nullptr, page_size,
+    map_base = reinterpret_cast<volatile uint32_t *>(mmap(nullptr, FPGA_PAGE_SIZE,
         PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
 
     if (map_base == reinterpret_cast<void *>(-1))
@@ -175,7 +176,7 @@ void gnss_sdr_fpga_sample_counter::close_device()
     map_base[2] = 0;  // disable the generation of the interrupt in the device
 
     auto *aux = const_cast<uint32_t *>(map_base);
-    if (munmap(static_cast<void *>(aux), page_size) == -1)
+    if (munmap(static_cast<void *>(aux), FPGA_PAGE_SIZE) == -1)
         {
             std::cout << "Failed to unmap memory uio\n";
         }
@@ -205,7 +206,7 @@ int gnss_sdr_fpga_sample_counter::general_work(int noutput_items __attribute__((
     out[0].Channel_ID = -1;
     out[0].fs = fs;
 
-    if ((sample_counter - last_sample_counter) > samples_per_report)
+    if ((sample_counter - last_sample_counter) >= samples_per_report)
         {
             last_sample_counter = sample_counter;
 
@@ -278,7 +279,11 @@ void gnss_sdr_fpga_sample_counter::wait_for_interrupt() const
 
     // enable interrupts
     int32_t reenable = 1;
-    write(fd, reinterpret_cast<void *>(&reenable), sizeof(int32_t));
+    const ssize_t nbytes = TEMP_FAILURE_RETRY(write(fd, reinterpret_cast<void *>(&reenable), sizeof(int32_t)));
+    if (nbytes != sizeof(int32_t))
+        {
+            std::cerr << "Error re-enabling FPGA sample counter interrupt.\n";
+        }
 
     // wait for interrupt
     nb = read(fd, &irq_count, sizeof(irq_count));

@@ -16,17 +16,22 @@
 
 
 #include "rtklib_pvt.h"
-#include "MATH_CONSTANTS.h"           // for D2R
-#include "configuration_interface.h"  // for ConfigurationInterface
-#include "galileo_almanac.h"          // for Galileo_Almanac
-#include "galileo_ephemeris.h"        // for Galileo_Ephemeris
-#include "gnss_sdr_flags.h"           // for FLAGS_RINEX_version
-#include "gps_almanac.h"              // for Gps_Almanac
-#include "gps_ephemeris.h"            // for Gps_Ephemeris
-#include "pvt_conf.h"                 // for Pvt_Conf
-#include "rtklib_rtkpos.h"            // for rtkfree, rtkinit
-#include <glog/logging.h>             // for LOG
-#include <iostream>                   // for operator<<
+#include "MATH_CONSTANTS.h"            // for D2R
+#include "configuration_interface.h"   // for ConfigurationInterface
+#include "galileo_almanac.h"           // for Galileo_Almanac
+#include "galileo_ephemeris.h"         // for Galileo_Ephemeris
+#include "gnss_sdr_flags.h"            // for FLAGS_RINEX_version
+#include "gnss_sdr_string_literals.h"  // for std::string_literals
+#include "gps_almanac.h"               // for Gps_Almanac
+#include "gps_ephemeris.h"             // for Gps_Ephemeris
+#include "pvt_conf.h"                  // for Pvt_Conf
+#include "rtklib_rtkpos.h"             // for rtkfree, rtkinit
+#include <glog/logging.h>              // for LOG
+#include <iostream>                    // for std::cout
+#if USE_STD_COMMON_FACTOR
+#include <numeric>
+namespace bc = std;
+#else
 #if USE_OLD_BOOST_MATH_COMMON_FACTOR
 #include <boost/math/common_factor_rt.hpp>
 namespace bc = boost::math;
@@ -34,7 +39,9 @@ namespace bc = boost::math;
 #include <boost/integer/common_factor_rt.hpp>
 namespace bc = boost::integer;
 #endif
+#endif
 
+using namespace std::string_literals;
 
 Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     const std::string& role,
@@ -54,6 +61,8 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     pvt_output_parameters.dump_filename = configuration->property(role + ".dump_filename", default_dump_filename);
     pvt_output_parameters.dump_mat = configuration->property(role + ".dump_mat", true);
 
+    pvt_output_parameters.rtk_trace_level = configuration->property(role + ".rtk_trace_level"s, 0);
+
     // Flag to postprocess old gnss records (older than 2009) and avoid wrong week rollover
     pvt_output_parameters.pre_2009_file = configuration->property("GNSS-SDR.pre_2009_file", false);
 
@@ -64,6 +73,13 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
 
     // display rate
     pvt_output_parameters.display_rate_ms = bc::lcm(pvt_output_parameters.output_rate_ms, configuration->property(role + ".display_rate_ms", 500));
+
+    // PVT KF settings
+    pvt_output_parameters.enable_pvt_kf = configuration->property(role + ".enable_pvt_kf", false);
+    pvt_output_parameters.measures_ecef_pos_sd_m = configuration->property(role + ".kf_measures_ecef_pos_sd_m", 1.0);
+    pvt_output_parameters.measures_ecef_vel_sd_ms = configuration->property(role + ".kf_measures_ecef_vel_sd_ms", 0.1);
+    pvt_output_parameters.system_ecef_pos_sd_m = configuration->property(role + ".kf_system_ecef_pos_sd_m", 2.0);
+    pvt_output_parameters.system_ecef_vel_sd_ms = configuration->property(role + ".kf_system_ecef_vel_sd_ms", 0.5);
 
     // NMEA Printer settings
     pvt_output_parameters.flag_nmea_tty_port = configuration->property(role + ".flag_nmea_tty_port", false);
@@ -118,10 +134,35 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
             pvt_output_parameters.rtcm_msg_rate_ms[k] = rtcm_MT1097_rate_ms;
         }
 
+    // Advanced Nativation Protocol Printer settings
+    pvt_output_parameters.an_output_enabled = configuration->property(role + ".an_output_enabled", pvt_output_parameters.an_output_enabled);
+    pvt_output_parameters.an_dump_devname = configuration->property(role + ".an_dump_devname", default_nmea_dump_devname);
+    if (pvt_output_parameters.an_output_enabled && pvt_output_parameters.flag_nmea_tty_port)
+        {
+            if (pvt_output_parameters.nmea_dump_devname == pvt_output_parameters.an_dump_devname)
+                {
+                    std::cerr << "Warning: NMEA an Advanced Nativation printers set to write to the same serial port.\n"
+                              << "Please make sure that PVT.an_dump_devname and PVT.an_dump_devname are different.\n"
+                              << "Shutting down the NMEA serial output.\n";
+                    pvt_output_parameters.flag_nmea_tty_port = false;
+                }
+        }
+    if (pvt_output_parameters.an_output_enabled && pvt_output_parameters.flag_rtcm_tty_port)
+        {
+            if (pvt_output_parameters.rtcm_dump_devname == pvt_output_parameters.an_dump_devname)
+                {
+                    std::cerr << "Warning: RTCM an Advanced Nativation printers set to write to the same serial port.\n"
+                              << "Please make sure that PVT.an_dump_devname and .rtcm_dump_devname are different.\n"
+                              << "Shutting down the RTCM serial output.\n";
+                    pvt_output_parameters.flag_rtcm_tty_port = false;
+                }
+        }
+
     pvt_output_parameters.kml_rate_ms = bc::lcm(configuration->property(role + ".kml_rate_ms", pvt_output_parameters.kml_rate_ms), pvt_output_parameters.output_rate_ms);
     pvt_output_parameters.gpx_rate_ms = bc::lcm(configuration->property(role + ".gpx_rate_ms", pvt_output_parameters.gpx_rate_ms), pvt_output_parameters.output_rate_ms);
     pvt_output_parameters.geojson_rate_ms = bc::lcm(configuration->property(role + ".geojson_rate_ms", pvt_output_parameters.geojson_rate_ms), pvt_output_parameters.output_rate_ms);
     pvt_output_parameters.nmea_rate_ms = bc::lcm(configuration->property(role + ".nmea_rate_ms", pvt_output_parameters.nmea_rate_ms), pvt_output_parameters.output_rate_ms);
+    pvt_output_parameters.an_rate_ms = configuration->property(role + ".an_rate_ms", pvt_output_parameters.an_rate_ms);
 
     // Infer the type of receiver
     /*
@@ -144,6 +185,8 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
      *    15   |  Galileo E1B + Galileo E5b
      *    16   |  GPS L2C + GPS L5
      *    17   |  GPS L2C + Galileo E5a
+     *    18   |  GPS L2C + Galileo E5b
+     *    19   |  Galileo E5a + Galileo E5b
      *    20   |  GPS L5 + Galileo E5b
      *    21   |  GPS L1 C/A + Galileo E1B + GPS L2C
      *    22   |  GPS L1 C/A + Galileo E1B + GPS L5
@@ -167,6 +210,7 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
      *    104   |  Galileo E1B + Galileo E5a + Galileo E6B
      *    105   |  Galileo E1B + Galileo E5b + Galileo E6B
      *    106   |  GPS L1 C/A + Galileo E1B + Galileo E6B
+     *    107   |  GPS L1 C/A + Galileo E6B
      *    Skipped previous values to avoid overlapping
      *    500   |  BeiDou B1I
      *    501   |  BeiDou B1I + GPS L1 C/A
@@ -273,10 +317,16 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
         }
     if ((gps_1C_count == 0) && (gps_2S_count != 0) && (gps_L5_count == 0) && (gal_1B_count == 0) && (gal_E5a_count == 0) && (gal_E5b_count != 0) && (gal_E6_count == 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count == 0) && (bds_B3_count == 0))
         {
-            pvt_output_parameters.type_of_receiver = 18;
+            pvt_output_parameters.type_of_receiver = 18;  // GPS L2C + Galileo E5b
         }
-    // if( (gps_1C_count == 0) && (gps_2S_count == 0) && (gps_L5_count == 0) && (gal_1B_count == 0) && (gal_E5a_count == 0) && (gal_E5b_count == 0) && (gal_E6_count == 0)) pvt_output_parameters.type_of_receiver = 19;
-    // if( (gps_1C_count == 0) && (gps_2S_count == 0) && (gps_L5_count == 0) && (gal_1B_count == 0) && (gal_E5a_count == 0) && (gal_E5b_count == 0) && (gal_E6_count == 0)) pvt_output_parameters.type_of_receiver = 20;
+    if ((gps_1C_count == 0) && (gps_2S_count == 0) && (gps_L5_count == 0) && (gal_1B_count == 0) && (gal_E5a_count != 0) && (gal_E5b_count != 0) && (gal_E6_count == 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count == 0) && (bds_B3_count == 0))
+        {
+            pvt_output_parameters.type_of_receiver = 19;  // Galileo E5a + Galileo E5b
+        }
+    if ((gps_1C_count == 0) && (gps_2S_count == 0) && (gps_L5_count != 0) && (gal_1B_count == 0) && (gal_E5a_count == 0) && (gal_E5b_count != 0) && (gal_E6_count == 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count == 0) && (bds_B3_count == 0))
+        {
+            pvt_output_parameters.type_of_receiver = 20;  // GPS L5 + Galileo E5b
+        }
     if ((gps_1C_count != 0) && (gps_2S_count != 0) && (gps_L5_count == 0) && (gal_1B_count != 0) && (gal_E5a_count == 0) && (gal_E5b_count == 0) && (gal_E6_count == 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count == 0) && (bds_B3_count == 0))
         {
             pvt_output_parameters.type_of_receiver = 21;  // GPS L1 C/A + Galileo E1B + GPS L2C
@@ -357,6 +407,14 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     if ((gps_1C_count != 0) && (gps_2S_count == 0) && (gps_L5_count == 0) && (gal_1B_count != 0) && (gal_E5a_count == 0) && (gal_E5b_count == 0) && (gal_E6_count != 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count == 0) && (bds_B3_count == 0))
         {
             pvt_output_parameters.type_of_receiver = 106;  // GPS L1 C/A + Galileo E1B + Galileo E6B
+        }
+    if ((gps_1C_count != 0) && (gps_2S_count == 0) && (gps_L5_count == 0) && (gal_1B_count == 0) && (gal_E5a_count == 0) && (gal_E5b_count == 0) && (gal_E6_count != 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count == 0) && (bds_B3_count == 0))
+        {
+            pvt_output_parameters.type_of_receiver = 107;  // GPS L1 C/A + Galileo E6B
+        }
+    if ((gps_1C_count != 0) && (gps_2S_count == 0) && (gps_L5_count != 0) && (gal_1B_count != 0) && (gal_E5a_count != 0) && (gal_E5b_count == 0) && (gal_E6_count != 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count == 0) && (bds_B3_count == 0))
+        {
+            pvt_output_parameters.type_of_receiver = 108;  // GPS L1 C/A + Galileo E1B + GPS L5 + Galileo E5a + Galileo E6B
         }
     // BeiDou B1I Receiver
     if ((gps_1C_count == 0) && (gps_2S_count == 0) && (gps_L5_count == 0) && (gal_1B_count == 0) && (gal_E5a_count == 0) && (gal_E5b_count == 0) && (gal_E6_count == 0) && (glo_1G_count == 0) && (glo_2G_count == 0) && (bds_B1_count != 0) && (bds_B3_count == 0))
@@ -442,37 +500,39 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     if (positioning_mode == -1)
         {
             // warn user and set the default
-            std::cout << "WARNING: Bad specification of positioning mode.\n";
-            std::cout << "positioning_mode possible values: Single / Static / Kinematic / PPP_Static / PPP_Kinematic\n";
-            std::cout << "positioning_mode specified value: " << positioning_mode_str << '\n';
-            std::cout << "Setting positioning_mode to Single\n";
+            std::cout << "WARNING: Bad specification of positioning mode.\n"
+                      << "positioning_mode possible values: Single / Static / Kinematic / PPP_Static / PPP_Kinematic\n"
+                      << "positioning_mode specified value: " << positioning_mode_str << "\n"
+                      << "Setting positioning_mode to Single\n"
+                      << std::flush;
             positioning_mode = PMODE_SINGLE;
         }
 
     int num_bands = 0;
 
-    if ((gps_1C_count > 0) || (gal_1B_count > 0) || (gal_E6_count > 0) || (glo_1G_count > 0) || (bds_B1_count > 0))
+    if ((gps_1C_count > 0) || (gal_1B_count > 0) || (glo_1G_count > 0) || (bds_B1_count > 0))
         {
-            num_bands = 1;
+            num_bands += 1;
         }
-    if (((gps_1C_count > 0) || (gal_1B_count > 0) || (glo_1G_count > 0) || (bds_B1_count > 0)) && ((gps_2S_count > 0) || (glo_2G_count > 0) || (bds_B3_count > 0)))
+    if ((gps_2S_count > 0) || (glo_2G_count > 0) || (bds_B3_count > 0))
         {
-            num_bands = 2;
+            num_bands += 1;
         }
-    if (((gps_1C_count > 0) || (gal_1B_count > 0) || (glo_1G_count > 0) || (bds_B1_count > 0)) && ((gal_E5a_count > 0) || (gal_E5b_count > 0) || (gps_L5_count > 0)))
+    if (gal_E6_count > 0)
         {
-            num_bands = 2;
+            num_bands += 1;
         }
-    if ((gal_1B_count > 0) && (gal_E6_count > 0))
+    if ((gal_E5a_count > 0) || (gps_L5_count > 0))
         {
-            num_bands = 2;
+            num_bands += 1;
         }
-    if ((gal_1B_count > 0) && (gal_E6_count > 0) && ((gal_E5a_count > 0) || (gal_E5b_count > 0)))
+    if (gal_E5b_count > 0)
         {
-            num_bands = 3;
+            num_bands += 1;
         }
-    if (((gps_1C_count > 0) || (gal_1B_count > 0) || (glo_1G_count > 0) || (bds_B1_count > 0)) && ((gps_2S_count > 0) || (glo_2G_count > 0) || (bds_B3_count > 0)) && ((gal_E5a_count > 0) || (gal_E5b_count > 0) || (gps_L5_count > 0)))
+    if (num_bands > 3)
         {
+            LOG(WARNING) << "Too much bands: The PVT engine can only handle 3 bands, but " << num_bands << " were set";
             num_bands = 3;
         }
 
@@ -529,10 +589,11 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     if (iono_model == -1)
         {
             // warn user and set the default
-            std::cout << "WARNING: Bad specification of ionospheric model.\n";
-            std::cout << "iono_model possible values: OFF / Broadcast / SBAS / Iono-Free-LC / Estimate_STEC / IONEX\n";
-            std::cout << "iono_model specified value: " << iono_model_str << '\n';
-            std::cout << "Setting iono_model to OFF\n";
+            std::cout << "WARNING: Bad specification of ionospheric model.\n"
+                      << "iono_model possible values: OFF / Broadcast / SBAS / Iono-Free-LC / Estimate_STEC / IONEX\n"
+                      << "iono_model specified value: " << iono_model_str << "\n"
+                      << "Setting iono_model to OFF\n"
+                      << std::flush;
             iono_model = IONOOPT_OFF; /* 0: ionosphere option: correction off */
         }
 
@@ -562,10 +623,11 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     if (trop_model == -1)
         {
             // warn user and set the default
-            std::cout << "WARNING: Bad specification of tropospheric model.\n";
-            std::cout << "trop_model possible values: OFF / Saastamoinen / SBAS / Estimate_ZTD / Estimate_ZTD_Grad\n";
-            std::cout << "trop_model specified value: " << trop_model_str << '\n';
-            std::cout << "Setting trop_model to OFF\n";
+            std::cout << "WARNING: Bad specification of tropospheric model.\n"
+                      << "trop_model possible values: OFF / Saastamoinen / SBAS / Estimate_ZTD / Estimate_ZTD_Grad\n"
+                      << "trop_model specified value: " << trop_model_str << "\n"
+                      << "Setting trop_model to OFF\n"
+                      << std::flush;
             trop_model = TROPOPT_OFF;
         }
 
@@ -640,10 +702,11 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     if (integer_ambiguity_resolution_gps == -1)
         {
             // warn user and set the default
-            std::cout << "WARNING: Bad specification of GPS ambiguity resolution method.\n";
-            std::cout << "AR_GPS possible values: OFF / Continuous / Instantaneous / Fix-and-Hold / PPP-AR\n";
-            std::cout << "AR_GPS specified value: " << integer_ambiguity_resolution_gps_str << '\n';
-            std::cout << "Setting AR_GPS to OFF\n";
+            std::cout << "WARNING: Bad specification of GPS ambiguity resolution method.\n"
+                      << "AR_GPS possible values: OFF / Continuous / Instantaneous / Fix-and-Hold / PPP-AR\n"
+                      << "AR_GPS specified value: " << integer_ambiguity_resolution_gps_str << "\n"
+                      << "Setting AR_GPS to OFF\n"
+                      << std::flush;
             integer_ambiguity_resolution_gps = ARMODE_OFF;
         }
 
@@ -712,6 +775,8 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     const double carrier_phase_error_factor_a = configuration->property(role + ".carrier_phase_error_factor_a", 0.003);
     const double carrier_phase_error_factor_b = configuration->property(role + ".carrier_phase_error_factor_b", 0.003);
 
+    const bool bancroft_init = configuration->property(role + ".bancroft_init", true);
+
     snrmask_t snrmask = {{}, {{}, {}}};
 
     prcopt_t rtklib_configuration_options = {
@@ -770,7 +835,8 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
         {{}, {}},                                                                          /* odisp[2][6*11] ocean tide loading parameters {rov,base} */
         {{}, {{}, {}}, {{}, {}}, {}, {}},                                                  /* exterr_t exterr   extended receiver error model */
         0,                                                                                 /* disable L2-AR */
-        {}                                                                                 /* char pppopt[256]   ppp option   "-GAP_RESION="  default gap to reset iono parameters (ep) */
+        {},                                                                                /* char pppopt[256]   ppp option   "-GAP_RESION="  default gap to reset iono parameters (ep) */
+        bancroft_init                                                                      /* enable Bancroft initialization for the first iteration of the PVT computation, useful in some geometries */
     };
 
     rtkinit(&rtk, &rtklib_configuration_options);
@@ -795,6 +861,7 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
     pvt_output_parameters.xml_output_path = configuration->property(role + ".xml_output_path", default_output_path);
     pvt_output_parameters.nmea_output_file_path = configuration->property(role + ".nmea_output_file_path", default_output_path);
     pvt_output_parameters.rtcm_output_file_path = configuration->property(role + ".rtcm_output_file_path", default_output_path);
+    pvt_output_parameters.has_output_file_path = configuration->property(role + ".has_output_file_path", default_output_path);
 
     // Read PVT MONITOR Configuration
     pvt_output_parameters.monitor_enabled = configuration->property(role + ".enable_monitor", false);
@@ -819,6 +886,17 @@ Rtklib_Pvt::Rtklib_Pvt(const ConfigurationInterface* configuration,
 
     // Set maximum clock offset allowed if pvt_output_parameters.enable_rx_clock_correction = false
     pvt_output_parameters.max_obs_block_rx_clock_offset_ms = configuration->property(role + ".max_clock_offset_ms", pvt_output_parameters.max_obs_block_rx_clock_offset_ms);
+
+    // Source timetag
+    pvt_output_parameters.log_source_timetag = configuration->property(role + ".log_timetag", pvt_output_parameters.log_source_timetag);
+    pvt_output_parameters.log_source_timetag_file = configuration->property(role + ".log_source_timetag_file", pvt_output_parameters.log_source_timetag_file);
+
+    // Use E6 for PVT
+    pvt_output_parameters.use_e6_for_pvt = configuration->property(role + ".use_e6_for_pvt", pvt_output_parameters.use_e6_for_pvt);
+    pvt_output_parameters.use_has_corrections = configuration->property(role + ".use_has_corrections", pvt_output_parameters.use_has_corrections);
+
+    // Use unhealthy satellites
+    pvt_output_parameters.use_unhealthy_sats = configuration->property(role + ".use_unhealthy_sats", pvt_output_parameters.use_unhealthy_sats);
 
     // make PVT object
     pvt_ = rtklib_make_pvt_gs(in_streams_, pvt_output_parameters, rtk);

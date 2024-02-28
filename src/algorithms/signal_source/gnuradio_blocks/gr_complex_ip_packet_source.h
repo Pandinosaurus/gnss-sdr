@@ -83,26 +83,23 @@ private:
     bool open();
 
     boost::thread *d_pcap_thread;
-    boost::mutex d_mutex;
+    // boost::mutex d_mutex;
     struct sockaddr_in si_me
     {
     };
     std::string d_src_device;
     std::string d_origin_address;
     pcap_t *descr;  // ethernet pcap device descriptor
-    size_t d_item_size;
     char *fifo_buff;
     int fifo_read_ptr;
     int fifo_write_ptr;
     int fifo_items;
     int d_sock_raw;
     int d_udp_port;
-    int d_udp_payload_size;
     int d_n_baseband_channels;
     int d_wire_sample_type;
-    int d_bytes_per_sample;
+    float d_bytes_per_sample;
     bool d_IQ_swap;
-    bool d_fifo_full;
 };
 
 

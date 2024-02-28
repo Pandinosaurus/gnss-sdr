@@ -19,6 +19,7 @@
 #ifndef GNSS_SDR_GNSS_EPHEMERIS_H
 #define GNSS_SDR_GNSS_EPHEMERIS_H
 
+#include <array>
 #include <cstdint>
 
 /*!
@@ -36,24 +37,52 @@ public:
      */
     double sv_clock_drift(double transmitTime);
 
+    /*!
+     * \brief Computes prediction of the Doppler shift for a given time and receiver's position and velocity.
+     * \f[
+     * f_{d} = - \mathbf{v} \frac{\mathbf{x}^{T}}{\left| \mathbf{x} \right| } \frac{f_{L}}{c}
+     * \f]
+     * where:
+     * \f[
+     * \mathbf{v} = \mathbf{v}_{sat} - \mathbf{v}_{rx}
+     * \f]
+     * \f[
+     * \mathbf{x} = \mathbf{x}_{sat} - \mathbf{x}_{rx}
+     * \f]
+     * \f[
+     * \left| \mathbf{x} \right| = \sqrt{\mathbf{x}\mathbf{x}^{T}}
+     * \f]
+     *
+     * @param[in] rx_time_s Time of Week in seconds
+     * @param[in] lat Receiver's latitude in degrees
+     * @param[in] lon Receiver's longitude in degrees
+     * @param[in] h   Receiver's height in meters
+     * @param[in] ve  Receiver's velocity in the East direction [m/s]
+     * @param[in] vn  Receiver's velocity in the North direction [m/s]
+     * @param[in] vu  Receiver's velocity in the Up direction [m/s]
+     * @param[in] band Signal band for which the Doppler will be computed
+     *                 (1: L1 C/A, E1B, BI1; 2: L2C, BI2; 3: BI3; 5: L5/E5a; 6: E6B; 7: E5b; 8: E5a+E5b)
+     */
+    double predicted_doppler(double rx_time_s, double lat, double lon, double h, double ve, double vn, double vu, int band) const;
+
     void satellitePosition(double transmitTime);  //!< Computes the ECEF SV coordinates and ECEF velocity
 
     uint32_t PRN{};     //!< SV ID
-    double M_0{};       //!< Mean anomaly at reference time [semi-circles]
-    double delta_n{};   //!< Mean motion difference from computed value [semi-circles/sec]
+    double M_0{};       //!< Mean anomaly at reference time [rad]
+    double delta_n{};   //!< Mean motion difference from computed value [rad/sec]
     double ecc{};       //!< Eccentricity
     double sqrtA{};     //!< Square root of the semi-major axis [meters^1/2]
-    double OMEGA_0{};   //!< Longitude of ascending node of orbital plane at weekly epoch [semi-circles]
-    double i_0{};       //!< Inclination angle at reference time [semi-circles]
-    double omega{};     //!< Argument of perigee [semi-circles]
-    double OMEGAdot{};  //!< Rate of right ascension [semi-circles/sec]
-    double idot{};      //!< Rate of inclination angle [semi-circles/sec]
-    double Cuc{};       //!< Amplitude of the cosine harmonic correction term to the argument of latitude [radians]
-    double Cus{};       //!< Amplitude of the sine harmonic correction term to the argument of latitude [radians]
+    double OMEGA_0{};   //!< Longitude of ascending node of orbital plane at weekly epoch [rad]
+    double i_0{};       //!< Inclination angle at reference time [rad]
+    double omega{};     //!< Argument of perigee [rad]
+    double OMEGAdot{};  //!< Rate of right ascension [rad/sec]
+    double idot{};      //!< Rate of inclination angle [rad/sec]
+    double Cuc{};       //!< Amplitude of the cosine harmonic correction term to the argument of latitude [rad]
+    double Cus{};       //!< Amplitude of the sine harmonic correction term to the argument of latitude [rad]
     double Crc{};       //!< Amplitude of the cosine harmonic correction term to the orbit radius [meters]
     double Crs{};       //!< Amplitude of the sine harmonic correction term to the orbit radius [meters]
-    double Cic{};       //!< Amplitude of the cosine harmonic correction term to the angle of inclination [radians]
-    double Cis{};       //!< Amplitude of the sine harmonic correction term to the angle of inclination [radians]
+    double Cic{};       //!< Amplitude of the cosine harmonic correction term to the angle of inclination [rad]
+    double Cis{};       //!< Amplitude of the sine harmonic correction term to the angle of inclination [rad]
     int32_t toe{};      //!< Ephemeris reference time [s]
 
     // Clock correction parameters
@@ -83,6 +112,7 @@ protected:
     char System{};  //!< Character ID of the GNSS system. 'G': GPS.  'E': Galileo.  'B': BeiDou
 
 private:
+    void satellitePosVelComputation(double transmitTime, std::array<double, 7>& pos_vel_dtr) const;
     double check_t(double time) const;
     double sv_clock_relativistic_term(double transmitTime) const;
 };

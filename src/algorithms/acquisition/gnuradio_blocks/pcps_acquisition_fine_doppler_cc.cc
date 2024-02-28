@@ -41,30 +41,41 @@ pcps_acquisition_fine_doppler_cc_sptr pcps_make_acquisition_fine_doppler_cc(cons
 pcps_acquisition_fine_doppler_cc::pcps_acquisition_fine_doppler_cc(const Acq_Conf &conf_)
     : gr::block("pcps_acquisition_fine_doppler_cc",
           gr::io_signature::make(1, 1, sizeof(gr_complex)),
-          gr::io_signature::make(0, 1, sizeof(Gnss_Synchro)))
+          gr::io_signature::make(0, 1, sizeof(Gnss_Synchro))),
+      d_dump_filename(conf_.dump_filename),
+      d_gnss_synchro(nullptr),
+      acq_parameters(conf_),
+      d_fs_in(conf_.fs_in),
+      d_dump_number(0),
+      d_sample_counter(0ULL),
+      d_threshold(0),
+      d_test_statistics(0),
+      d_positive_acq(0),
+      d_state(0),
+      d_samples_per_ms(static_cast<int>(conf_.samples_per_ms)),
+      d_max_dwells(conf_.max_dwells),
+      d_config_doppler_max(conf_.doppler_max),
+      d_num_doppler_points(0),
+      d_well_count(0),
+      d_n_samples_in_buffer(0),
+      d_fft_size(d_samples_per_ms),
+      d_gnuradio_forecast_samples(d_fft_size),
+      d_doppler_step(0),
+      d_channel(0),
+      d_dump_channel(0),
+      d_active(false),
+      d_dump(conf_.dump)
 {
     this->message_port_register_out(pmt::mp("events"));
-    acq_parameters = conf_;
-    d_sample_counter = 0ULL;  // SAMPLE COUNTER
-    d_active = false;
-    d_fs_in = conf_.fs_in;
-    d_samples_per_ms = static_cast<int>(conf_.samples_per_ms);
-    d_config_doppler_max = conf_.doppler_max;
-    d_fft_size = d_samples_per_ms;
-    // HS Acquisition
-    d_max_dwells = conf_.max_dwells;
-    d_gnuradio_forecast_samples = d_fft_size;
-    d_state = 0;
-    d_fft_codes.reserve(d_fft_size);
-    d_magnitude.reserve(d_fft_size);
-    d_10_ms_buffer.reserve(50 * d_samples_per_ms);
+
+    d_fft_codes = volk_gnsssdr::vector<gr_complex>(d_fft_size);
+    d_magnitude = volk_gnsssdr::vector<float>(d_fft_size);
+    d_10_ms_buffer = volk_gnsssdr::vector<gr_complex>(50 * d_samples_per_ms);
     d_fft_if = gnss_fft_fwd_make_unique(d_fft_size);
     d_ifft = gnss_fft_rev_make_unique(d_fft_size);
 
-    // For dumping samples into a file
-    d_dump = conf_.dump;
-    d_dump_filename = conf_.dump_filename;
-
+    // this implementation can only produce dumps in channel 0
+    // todo: migrate config parameters to the unified acquisition config class
     if (d_dump)
         {
             std::string dump_path;
@@ -73,7 +84,7 @@ pcps_acquisition_fine_doppler_cc::pcps_acquisition_fine_doppler_cc(const Acq_Con
                 {
                     std::string dump_filename_ = d_dump_filename.substr(d_dump_filename.find_last_of('/') + 1);
                     dump_path = d_dump_filename.substr(0, d_dump_filename.find_last_of('/'));
-                    d_dump_filename = dump_filename_;
+                    d_dump_filename = std::move(dump_filename_);
                 }
             else
                 {
@@ -96,21 +107,6 @@ pcps_acquisition_fine_doppler_cc::pcps_acquisition_fine_doppler_cc(const Acq_Con
                     d_dump = false;
                 }
         }
-
-    d_n_samples_in_buffer = 0;
-    d_threshold = 0;
-    d_num_doppler_points = 0;
-    d_doppler_step = 0;
-    d_gnss_synchro = nullptr;
-    d_code_phase = 0;
-    d_doppler_freq = 0;
-    d_test_statistics = 0;
-    d_well_count = 0;
-    d_channel = 0;
-    d_positive_acq = 0;
-    d_dump_number = 0;
-    d_dump_channel = 0;  // this implementation can only produce dumps in channel 0
-    // todo: migrate config parameters to the unified acquisition config class
 }
 
 
@@ -150,7 +146,7 @@ void pcps_acquisition_fine_doppler_cc::set_doppler_step(unsigned int doppler_ste
 
 void pcps_acquisition_fine_doppler_cc::set_local_code(std::complex<float> *code)
 {
-    memcpy(d_fft_if->get_inbuf(), code, sizeof(gr_complex) * d_fft_size);
+    std::copy(code, code + d_fft_size, d_fft_if->get_inbuf());
     d_fft_if->execute();  // We need the FFT of local code
     // Conjugate the local code
     volk_32fc_conjugate_32fc(d_fft_codes.data(), d_fft_if->get_outbuf(), d_fft_size);
@@ -238,7 +234,7 @@ float pcps_acquisition_fine_doppler_cc::compute_CAF()
             // Record results to file if required
             if (d_dump and d_channel == d_dump_channel)
                 {
-                    memcpy(grid_.colptr(i), d_grid_data[i].data(), sizeof(float) * d_fft_size);
+                    std::copy(d_grid_data[i].data(), d_grid_data[i].data() + d_fft_size, grid_.colptr(i));
                 }
         }
 
@@ -376,7 +372,7 @@ int pcps_acquisition_fine_doppler_cc::estimate_Doppler()
 
     for (int n = 0; n < prn_replicas - 1; n++)
         {
-            memcpy(&code_replica[(n + 1) * d_fft_size], code_replica.data(), d_fft_size * sizeof(gr_complex));
+            std::copy_n(code_replica.data(), d_fft_size, &code_replica[(n + 1) * d_fft_size]);
         }
     // 2. Perform code wipe-off
     volk_32fc_x2_multiply_32fc(fft_operator->get_inbuf(), d_10_ms_buffer.data(), code_replica.data(), signal_samples);
@@ -477,6 +473,7 @@ int pcps_acquisition_fine_doppler_cc::general_work(int noutput_items,
 
     int return_value = 0;  // Number of Gnss_Syncro objects produced
     int samples_remaining;
+    const auto *in_aux = reinterpret_cast<const gr_complex *>(input_items[0]);
     switch (d_state)
         {
         case 0:  // S0. StandBy
@@ -494,7 +491,7 @@ int pcps_acquisition_fine_doppler_cc::general_work(int noutput_items,
             break;
         case 1:  // S1. ComputeGrid
             compute_and_accumulate_grid(input_items);
-            memcpy(&d_10_ms_buffer[d_n_samples_in_buffer], reinterpret_cast<const gr_complex *>(input_items[0]), d_fft_size * sizeof(gr_complex));
+            std::copy(in_aux, in_aux + d_fft_size, &d_10_ms_buffer[d_n_samples_in_buffer]);
             d_n_samples_in_buffer += d_fft_size;
             d_well_count++;
             if (d_well_count >= d_max_dwells)
@@ -522,7 +519,7 @@ int pcps_acquisition_fine_doppler_cc::general_work(int noutput_items,
 
             if (samples_remaining > noutput_items)
                 {
-                    memcpy(&d_10_ms_buffer[d_n_samples_in_buffer], reinterpret_cast<const gr_complex *>(input_items[0]), noutput_items * sizeof(gr_complex));
+                    std::copy(in_aux, in_aux + noutput_items, &d_10_ms_buffer[d_n_samples_in_buffer]);
                     d_n_samples_in_buffer += noutput_items;
                     d_sample_counter += static_cast<uint64_t>(noutput_items);  // sample counter
                     consume_each(noutput_items);
@@ -531,7 +528,7 @@ int pcps_acquisition_fine_doppler_cc::general_work(int noutput_items,
                 {
                     if (samples_remaining > 0)
                         {
-                            memcpy(&d_10_ms_buffer[d_n_samples_in_buffer], reinterpret_cast<const gr_complex *>(input_items[0]), samples_remaining * sizeof(gr_complex));
+                            std::copy(in_aux, in_aux + samples_remaining, &d_10_ms_buffer[d_n_samples_in_buffer]);
                             d_sample_counter += static_cast<uint64_t>(samples_remaining);  // sample counter
                             consume_each(samples_remaining);
                         }
@@ -569,7 +566,7 @@ int pcps_acquisition_fine_doppler_cc::general_work(int noutput_items,
                     auto **out = reinterpret_cast<Gnss_Synchro **>(&output_items[0]);
                     Gnss_Synchro current_synchro_data = Gnss_Synchro();
                     current_synchro_data = *d_gnss_synchro;
-                    *out[0] = current_synchro_data;
+                    *out[0] = std::move(current_synchro_data);
                     return_value = 1;  // Number of Gnss_Synchro objects produced
                 }
             break;

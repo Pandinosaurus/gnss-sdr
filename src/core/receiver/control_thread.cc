@@ -55,6 +55,7 @@
 #include <algorithm>               // for find, min
 #include <chrono>                  // for milliseconds
 #include <cmath>                   // for floor, fmod, log
+#include <csignal>                 // for signal, SIGINT
 #include <ctime>                   // for time_t, gmtime, strftime
 #include <exception>               // for exception
 #include <iostream>                // for operator<<
@@ -69,12 +70,26 @@
 #include <boost/chrono.hpp>  // for steady_clock
 #endif
 
+#if PMT_USES_BOOST_ANY
+namespace wht = boost;
+#else
+namespace wht = std;
+#endif
+
 extern Concurrent_Map<Gps_Acq_Assist> global_gps_acq_assist_map;
 extern Concurrent_Queue<Gps_Acq_Assist> global_gps_acq_assist_queue;
 
+ControlThread *ControlThread::me = nullptr;
 
 ControlThread::ControlThread()
 {
+    ControlThread::me = this;
+
+    /* the class will handle signals */
+    signal(SIGINT, ControlThread::handle_signal);
+    signal(SIGTERM, ControlThread::handle_signal);
+    signal(SIGHUP, ControlThread::handle_signal);
+
     if (FLAGS_c == "-")
         {
             configuration_ = std::make_shared<FileConfiguration>(FLAGS_config_file);
@@ -123,15 +138,15 @@ ControlThread::ControlThread()
 
 
 ControlThread::ControlThread(std::shared_ptr<ConfigurationInterface> configuration)
+    : configuration_(std::move(configuration)),
+      well_formatted_configuration_(true),
+      conf_file_has_section_(true),
+      conf_file_has_mandatory_globals_(true),
+      conf_has_signal_sources_(true),
+      conf_has_observables_(true),
+      conf_has_pvt_(true),
+      restart_(false)
 {
-    configuration_ = std::move(configuration);
-    conf_file_has_section_ = true;
-    conf_file_has_mandatory_globals_ = true;
-    conf_has_signal_sources_ = true;
-    conf_has_observables_ = true;
-    conf_has_pvt_ = true;
-    well_formatted_configuration_ = true;
-    restart_ = false;
     init();
 }
 
@@ -182,7 +197,7 @@ void ControlThread::init()
             while (ss >> d)
                 {
                     vect.push_back(d);
-                    if ((ss.peek() == ',') or (ss.peek() == ' '))
+                    if ((ss.peek() == ',') || (ss.peek() == ' '))
                         {
                             ss.ignore();
                         }
@@ -190,7 +205,7 @@ void ControlThread::init()
             // fill agnss_ref_location_
             if (vect.size() >= 2)
                 {
-                    if ((vect[0] < 90.0) and (vect[0] > -90) and (vect[1] < 180.0) and (vect[1] > -180.0))
+                    if ((vect[0] < 90.0) && (vect[0] > -90) && (vect[1] < 180.0) && (vect[1] > -180.0))
                         {
                             agnss_ref_location_.lat = vect[0];
                             agnss_ref_location_.lon = vect[1];
@@ -260,6 +275,28 @@ ControlThread::~ControlThread()  // NOLINT(modernize-use-equals-default)
 }
 
 
+void ControlThread::handle_signal(int sig)
+{
+    LOG(INFO) << "GNSS-SDR received " << sig << " OS signal";
+    if (sig == SIGINT || sig == SIGTERM || sig == SIGHUP)
+        {
+            ControlThread::me->control_queue_->push(pmt::make_any(command_event_make(200, 0)));
+            ControlThread::me->stop_ = true;
+
+            // Reset signal handling to default behavior
+            if (sig == SIGINT)
+                {
+                    signal(SIGINT, SIG_DFL);
+                }
+        }
+    else if (sig == SIGCHLD)
+        {
+            LOG(INFO) << "Received SIGCHLD signal";
+            // todo
+        }
+}
+
+
 void ControlThread::telecommand_listener()
 {
     if (telecommand_enabled_)
@@ -280,7 +317,7 @@ void ControlThread::event_dispatcher(bool &valid_event, pmt::pmt_t &msg)
                 {
                     if (receiver_on_standby_ == false)
                         {
-                            const auto new_event = boost::any_cast<channel_event_sptr>(pmt::any_ref(msg));
+                            const auto new_event = wht::any_cast<channel_event_sptr>(pmt::any_ref(msg));
                             DLOG(INFO) << "New channel event rx from ch id: " << new_event->channel_id
                                        << " what: " << new_event->event_type;
                             flowgraph_->apply_action(new_event->channel_id, new_event->event_type);
@@ -288,7 +325,7 @@ void ControlThread::event_dispatcher(bool &valid_event, pmt::pmt_t &msg)
                 }
             else if (msg_type_hash_code == command_event_type_hash_code_)
                 {
-                    const auto new_event = boost::any_cast<command_event_sptr>(pmt::any_ref(msg));
+                    const auto new_event = wht::any_cast<command_event_sptr>(pmt::any_ref(msg));
                     DLOG(INFO) << "New command event rx from ch id: " << new_event->command_id
                                << " what: " << new_event->event_type;
 
@@ -369,7 +406,10 @@ int ControlThread::run()
     // launch GNSS assistance process AFTER the flowgraph is running because the GNU Radio asynchronous queues must be already running to transport msgs
     assist_GNSS();
     // start the keyboard_listener thread
-    keyboard_thread_ = std::thread(&ControlThread::keyboard_listener, this);
+    if (FLAGS_keyboard)
+        {
+            keyboard_thread_ = std::thread(&ControlThread::keyboard_listener, this);
+        }
     sysv_queue_thread_ = std::thread(&ControlThread::sysv_queue_listener, this);
 
     // start the telecommand listener thread
@@ -405,11 +445,15 @@ int ControlThread::run()
 #endif
 
     // Terminate keyboard thread
-    if (keyboard_thread_.joinable())
+    if (FLAGS_keyboard && keyboard_thread_.joinable())
         {
             pthread_t id = keyboard_thread_.native_handle();
             keyboard_thread_.detach();
+#ifndef ANDROID
             pthread_cancel(id);
+#else
+            // todo: find alternative
+#endif
         }
 
     // Terminate telecommand thread
@@ -417,7 +461,11 @@ int ControlThread::run()
         {
             pthread_t id2 = cmd_interface_thread_.native_handle();
             cmd_interface_thread_.detach();
+#ifndef ANDROID
             pthread_cancel(id2);
+#else
+            // todo: find alternative
+#endif
         }
 
     LOG(INFO) << "Flowgraph stopped";
@@ -533,7 +581,8 @@ bool ControlThread::read_assistance_from_XML()
                 }
         }
 
-    if ((configuration_->property("Channels_1B.count", 0) > 0) or (configuration_->property("Channels_5X.count", 0) > 0))
+    if ((configuration_->property("Channels_1B.count", 0) > 0) || (configuration_->property("Channels_5X.count", 0) > 0) ||
+        (configuration_->property("Channels_7X.count", 0) > 0) || (configuration_->property("Channels_E6.count", 0) > 0))
         {
             if (supl_client_ephemeris_.load_gal_ephemeris_xml(eph_gal_xml_filename) == true)
                 {
@@ -580,7 +629,7 @@ bool ControlThread::read_assistance_from_XML()
                 }
         }
 
-    if ((configuration_->property("Channels_2S.count", 0) > 0) or (configuration_->property("Channels_L5.count", 0) > 0))
+    if ((configuration_->property("Channels_2S.count", 0) > 0) || (configuration_->property("Channels_L5.count", 0) > 0))
         {
             if (supl_client_ephemeris_.load_cnav_ephemeris_xml(eph_cnav_xml_filename) == true)
                 {
@@ -605,7 +654,7 @@ bool ControlThread::read_assistance_from_XML()
                 }
         }
 
-    if ((configuration_->property("Channels_1G.count", 0) > 0) or (configuration_->property("Channels_2G.count", 0) > 0))
+    if ((configuration_->property("Channels_1G.count", 0) > 0) || (configuration_->property("Channels_2G.count", 0) > 0))
         {
             if (supl_client_ephemeris_.load_gnav_ephemeris_xml(eph_glo_xml_filename) == true)
                 {
@@ -675,7 +724,7 @@ void ControlThread::assist_GNSS()
     // GNSS Assistance configuration
     const bool enable_gps_supl_assistance = configuration_->property("GNSS-SDR.SUPL_gps_enabled", false);
     const bool enable_agnss_xml = configuration_->property("GNSS-SDR.AGNSS_XML_enabled", false);
-    if ((enable_gps_supl_assistance == true) and (enable_agnss_xml == false))
+    if ((enable_gps_supl_assistance == true) && (enable_agnss_xml == false))
         {
             std::cout << "SUPL RRLP GPS assistance enabled!\n";
             const std::string default_acq_server("supl.google.com");
@@ -710,12 +759,12 @@ void ControlThread::assist_GNSS()
                     supl_ci_ = -1;
                 }
 
-            if (supl_lac_ < 0 or supl_lac_ > 65535)
+            if (supl_lac_ < 0 || supl_lac_ > 65535)
                 {
                     supl_lac_ = 0x59e2;
                 }
 
-            if (supl_ci_ < 0 or supl_ci_ > 268435455)  // 2^16 for GSM and CDMA, 2^28 for UMTS and LTE networks
+            if (supl_ci_ < 0 || supl_ci_ > 268435455)  // 2^16 for GSM and CDMA, 2^28 for UMTS and LTE networks
                 {
                     supl_ci_ = 0x31b0;
                 }
@@ -863,7 +912,7 @@ void ControlThread::assist_GNSS()
                 }
         }
 
-    if ((enable_gps_supl_assistance == false) and (enable_agnss_xml == true))
+    if ((enable_gps_supl_assistance == false) && (enable_agnss_xml == true))
         {
             // read assistance from file
             if (read_assistance_from_XML())
@@ -873,7 +922,7 @@ void ControlThread::assist_GNSS()
         }
 
     // If AGNSS is enabled, make use of it
-    if ((agnss_ref_location_.valid == true) and ((enable_gps_supl_assistance == true) or (enable_agnss_xml == true)))
+    if ((agnss_ref_location_.valid == true) && ((enable_gps_supl_assistance == true) || (enable_agnss_xml == true)))
         {
             // Get the list of visible satellites
             std::array<float, 3> ref_LLH{};
@@ -1190,6 +1239,7 @@ void ControlThread::keyboard_listener()
                 {
                     std::cout << "Quit keystroke order received, stopping GNSS-SDR !!\n";
                     control_queue_->push(pmt::make_any(command_event_make(200, 0)));
+                    stop_ = true;
                     read_keys = false;
                 }
             else

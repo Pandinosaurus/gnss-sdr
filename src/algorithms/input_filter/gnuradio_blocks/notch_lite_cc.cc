@@ -21,7 +21,6 @@
 #include <volk/volk.h>
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 
 notch_lite_sptr make_notch_filter_lite(float p_c_factor, float pfa, int32_t length, int32_t n_segments_est, int32_t n_segments_reset, int32_t n_segments_coeff)
@@ -35,32 +34,35 @@ NotchLite::NotchLite(float p_c_factor,
     int32_t length,
     int32_t n_segments_est,
     int32_t n_segments_reset,
-    int32_t n_segments_coeff) : gr::block("NotchLite",
-                                    gr::io_signature::make(1, 1, sizeof(gr_complex)),
-                                    gr::io_signature::make(1, 1, sizeof(gr_complex)))
+    int32_t n_segments_coeff)
+    : gr::block("NotchLite",
+          gr::io_signature::make(1, 1, sizeof(gr_complex)),
+          gr::io_signature::make(1, 1, sizeof(gr_complex))),
+      last_out_(gr_complex(0.0, 0.0)),
+      z_0_(gr_complex(0.0, 0.0)),
+      p_c_factor_(gr_complex(p_c_factor, 0.0)),
+      c_samples1_(gr_complex(0.0, 0.0)),
+      c_samples2_(gr_complex(0.0, 0.0)),
+      pfa_(pfa),
+      noise_pow_est_(0.0),
+      angle1_(0.0),
+      angle2_(0.0),
+      length_(length),
+      n_segments_(0),
+      n_segments_est_(n_segments_est),
+      n_segments_reset_(n_segments_reset),
+      n_segments_coeff_reset_(n_segments_coeff),
+      n_segments_coeff_(0),
+      n_deg_fred_(2 * length),
+      filter_state_(false)
 {
     const int32_t alignment_multiple = volk_get_alignment() / sizeof(gr_complex);
     set_alignment(std::max(1, alignment_multiple));
     set_history(2);
-    p_c_factor_ = gr_complex(p_c_factor, 0.0);
-    n_segments_est_ = n_segments_est;
-    n_segments_reset_ = n_segments_reset;
-    n_segments_coeff_reset_ = n_segments_coeff;
-    n_segments_coeff_ = 0;
-    length_ = length;
-    pfa_ = pfa;
-    n_segments_ = 0;
-    n_deg_fred_ = 2 * length_;
-    noise_pow_est_ = 0.0;
-    filter_state_ = false;
-    z_0_ = gr_complex(0.0, 0.0);
-    last_out_ = gr_complex(0.0, 0.0);
+
     boost::math::chi_squared_distribution<float> my_dist_(n_deg_fred_);
     thres_ = boost::math::quantile(boost::math::complement(my_dist_, pfa_));
-    c_samples1_ = gr_complex(0.0, 0.0);
-    c_samples2_ = gr_complex(0.0, 0.0);
-    angle1_ = 0.0;
-    angle2_ = 0.0;
+
     power_spect_ = volk_gnsssdr::vector<float>(length_);
     d_fft_ = gnss_fft_fwd_make_unique(length_);
 }
@@ -80,13 +82,13 @@ int NotchLite::general_work(int noutput_items, gr_vector_int &ninput_items __att
         {
             if ((n_segments_ < n_segments_est_) && (filter_state_ == false))
                 {
-                    memcpy(d_fft_->get_inbuf(), in, sizeof(gr_complex) * length_);
+                    std::copy(in, in + length_, d_fft_->get_inbuf());
                     d_fft_->execute();
                     volk_32fc_s32f_power_spectrum_32f(power_spect_.data(), d_fft_->get_outbuf(), 1.0, length_);
                     volk_32f_s32f_calc_spectral_noise_floor_32f(&sig2dB, power_spect_.data(), 15.0, length_);
                     sig2lin = std::pow(10.0F, (sig2dB / 10.0F)) / static_cast<float>(n_deg_fred_);
                     noise_pow_est_ = (static_cast<float>(n_segments_) * noise_pow_est_ + sig2lin) / static_cast<float>(n_segments_ + 1);
-                    memcpy(out, in, sizeof(gr_complex) * length_);
+                    std::copy(in, in + length_, out);
                 }
             else
                 {
@@ -123,7 +125,7 @@ int NotchLite::general_work(int noutput_items, gr_vector_int &ninput_items __att
                                     n_segments_ = 0;
                                 }
                             filter_state_ = false;
-                            memcpy(out, in, sizeof(gr_complex) * length_);
+                            std::copy(in, in + length_, out);
                         }
                 }
             index_out += length_;
